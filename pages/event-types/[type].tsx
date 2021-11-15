@@ -30,12 +30,7 @@ import Select, { OptionTypeBase } from "react-select";
 
 import { StripeData } from "@ee/lib/stripe/server";
 
-import {
-  asNumberOrThrow,
-  asNumberOrUndefined,
-  asStringOrThrow,
-  asStringOrUndefined,
-} from "@lib/asStringOrNull";
+import { asNumberOrUndefined, asStringOrThrow, asStringOrUndefined } from "@lib/asStringOrNull";
 import { getSession } from "@lib/auth";
 import { HttpError } from "@lib/core/http/error";
 import { useLocale } from "@lib/hooks/useLocale";
@@ -356,21 +351,20 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
               {/* react-hook-formify  useform*/}
               <form
                 onSubmit={formMethods.handleSubmit(async (values) => {
-                  console.log(values);
                   // const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
                   const enteredTitle: string = values.title;
 
                   const advancedPayload: AdvancedOptions = {};
                   if (advancedSettingsVisible) {
                     advancedPayload.eventName = values.eventTitle;
-                    advancedPayload.periodType = values.periodType;
+                    advancedPayload.periodType = asStringOrUndefined(values.periodType);
                     advancedPayload.periodDays = asNumberOrUndefined(values.periodDays);
                     advancedPayload.periodCountCalendarDays = Boolean(
                       asNumberOrUndefined(values.periodDaysType)
                     );
                     advancedPayload.periodStartDate = values.periodDates.startDate || undefined;
                     advancedPayload.periodEndDate = values.periodDates.endDate || undefined;
-                    advancedPayload.minimumBookingNotice = asNumberOrUndefined(values.minimumBookingNotice);
+                    advancedPayload.minimumBookingNotice = values.minimumBookingNotice;
                     // prettier-ignore
                     advancedPayload.price =
                       !requirePayment ? undefined :
@@ -389,7 +383,6 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
                     title: enteredTitle,
                     slug: asStringOrThrow(values.slug),
                     description: asStringOrThrow(values.description),
-                    // length: asNumberOrThrow(values.length),
                     length: values.length,
                     hidden: values.isHidden,
                     locations,
@@ -401,7 +394,7 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
                         }
                       : {}),
                   };
-
+                  console.log(payload);
                   // updateMutation.mutate(payload);
                 })}
                 className="space-y-6">
@@ -444,6 +437,9 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
                         required
                         placeholder="15"
                         defaultValue={eventType.length || 15}
+                        onChange={(e) => {
+                          formMethods.setValue("length", Number(e.target.value));
+                        }}
                       />
                     )}
                   />
@@ -854,7 +850,6 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
                       />
 
                       <hr className="my-2 border-neutral-200" />
-
                       <Controller
                         name="minimumBookingNotice"
                         control={formMethods.control}
@@ -862,11 +857,12 @@ const EventTypePage = (props: inferSSRProps<typeof getServerSideProps>) => {
                         render={() => (
                           <MinutesField
                             label={t("minimum_booking_notice")}
-                            name="minimumBookingNotice"
-                            id="minimumBookingNotice"
                             required
                             placeholder="120"
                             defaultValue={eventType.minimumBookingNotice}
+                            onChange={(e) => {
+                              formMethods.setValue("minimumBookingNotice", Number(e.target.value));
+                            }}
                           />
                         )}
                       />
