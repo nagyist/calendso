@@ -1,15 +1,9 @@
-import { GetServerSidePropsContext } from "next";
+import Workflows from "@calcom/features/ee/workflows/pages/index";
 
-import { ssrInit } from "@server/lib/ssr";
+import PageWrapper from "@components/PageWrapper";
+import type { CalPageWrapper } from "@components/PageWrapper";
 
-export { default } from "@calcom/features/ee/workflows/pages/index";
+const WorkflowsPage = Workflows as CalPageWrapper;
+WorkflowsPage.PageWrapper = PageWrapper;
 
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-
-  return {
-    props: {
-      trpcState: ssr.dehydrate(),
-    },
-  };
-};
+export default WorkflowsPage;

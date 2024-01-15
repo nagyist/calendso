@@ -1,21 +1,30 @@
-import { InferGetStaticPropsType } from "next";
+"use client";
+
+import type { GetServerSidePropsContext } from "next";
 import Link from "next/link";
 
-import { getAppRegistry } from "@calcom/app-store/_appRegistry";
+import { getAppRegistry, getAppRegistryWithCredentials } from "@calcom/app-store/_appRegistry";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import Shell from "@calcom/features/shell/Shell";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Icon, SkeletonText } from "@calcom/ui";
+import type { inferSSRProps } from "@calcom/types/inferSSRProps";
+import { SkeletonText } from "@calcom/ui";
+import { ArrowLeft, ArrowRight } from "@calcom/ui/components/icon";
 
-export default function Apps({ categories }: InferGetStaticPropsType<typeof getStaticProps>) {
+import PageWrapper from "@components/PageWrapper";
+
+import { ssrInit } from "@server/lib/ssr";
+
+export default function Apps({ categories }: Omit<inferSSRProps<typeof getServerSideProps>, "trpcState">) {
   const { t, isLocaleReady } = useLocale();
 
   return (
-    <Shell isPublic large>
+    <Shell isPublic large hideHeadingOnMobile>
       <div className="text-md flex items-center gap-1 px-4 pb-3 pt-3 font-normal md:px-8 lg:px-0 lg:pt-0">
         <Link
           href="/apps"
-          className="inline-flex items-center justify-start gap-1 rounded-sm py-2 text-gray-900">
-          <Icon.FiArrowLeft className="h-4 w-4" />
+          className="text-emphasis inline-flex items-center justify-start gap-1 rounded-sm py-2">
+          <ArrowLeft className="h-4 w-4" />
           {isLocaleReady ? t("app_store") : <SkeletonText className="h-6 w-24" />}{" "}
         </Link>
       </div>
@@ -24,14 +33,14 @@ export default function Apps({ categories }: InferGetStaticPropsType<typeof getS
           {categories.map((category) => (
             <Link
               key={category.name}
-              href={"/apps/categories/" + category.name}
+              href={`/apps/categories/${category.name}`}
               data-testid={`app-store-category-${category.name}`}
-              className="relative flex rounded-sm bg-gray-100 px-6 py-4 sm:block">
+              className="bg-subtle relative flex rounded-sm px-6 py-4 sm:block">
               <div className="self-center">
                 <h3 className="font-medium capitalize">{category.name}</h3>
-                <p className="text-sm text-gray-500">
+                <p className="text-subtle text-sm">
                   {t("number_apps", { count: category.count })}{" "}
-                  <Icon.FiArrowRight className="inline-block h-4 w-4" />
+                  <ArrowRight className="inline-block h-4 w-4" />
                 </p>
               </div>
             </Link>
@@ -42,8 +51,22 @@ export default function Apps({ categories }: InferGetStaticPropsType<typeof getS
   );
 }
 
-export const getStaticProps = async () => {
-  const appStore = await getAppRegistry();
+Apps.PageWrapper = PageWrapper;
+
+export const getServerSideProps = async (context: GetServerSidePropsContext) => {
+  const { req, res } = context;
+
+  const ssr = await ssrInit(context);
+
+  const session = await getServerSession({ req, res });
+
+  let appStore;
+  if (session?.user?.id) {
+    appStore = await getAppRegistryWithCredentials(session.user.id);
+  } else {
+    appStore = await getAppRegistry();
+  }
+
   const categories = appStore.reduce((c, app) => {
     for (const category of app.categories) {
       c[category] = c[category] ? c[category] + 1 : 1;
@@ -54,6 +77,7 @@ export const getStaticProps = async () => {
   return {
     props: {
       categories: Object.entries(categories).map(([name, count]) => ({ name, count })),
+      trpcState: ssr.dehydrate(),
     },
   };
 };

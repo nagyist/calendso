@@ -1,15 +1,9 @@
-import { GetServerSidePropsContext } from "next";
+import TeamMembersView from "@calcom/features/ee/teams/pages/team-members-view";
 
-import { ssrInit } from "@server/lib/ssr";
+import type { CalPageWrapper } from "@components/PageWrapper";
+import PageWrapper from "@components/PageWrapper";
 
-export { default } from "@calcom/features/ee/teams/pages/team-members-view";
+const Page = TeamMembersView as CalPageWrapper;
+Page.PageWrapper = PageWrapper;
 
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-
-  return {
-    props: {
-      trpcState: ssr.dehydrate(),
-    },
-  };
-};
+export default Page;

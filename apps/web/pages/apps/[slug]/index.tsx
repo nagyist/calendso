@@ -1,20 +1,63 @@
+"use client";
+
+import { Prisma } from "@prisma/client";
 import fs from "fs";
 import matter from "gray-matter";
 import MarkdownIt from "markdown-it";
-import { GetStaticPaths, GetStaticPropsContext } from "next";
+import type { GetStaticPaths, GetStaticPropsContext } from "next";
+import Link from "next/link";
 import path from "path";
+import { z } from "zod";
 
 import { getAppWithMetadata } from "@calcom/app-store/_appRegistry";
-import ExisitingGoogleCal from "@calcom/app-store/googlevideo/components/ExistingGoogleCal";
+import { getAppAssetFullPath } from "@calcom/app-store/getAppAssetFullPath";
+import { IS_PRODUCTION } from "@calcom/lib/constants";
 import prisma from "@calcom/prisma";
 
-import { inferSSRProps } from "@lib/types/inferSSRProps";
+import type { inferSSRProps } from "@lib/types/inferSSRProps";
 
+import PageWrapper from "@components/PageWrapper";
 import App from "@components/apps/App";
 
 const md = new MarkdownIt("default", { html: true, breaks: true });
 
-function SingleAppPage({ data, source }: inferSSRProps<typeof getStaticProps>) {
+const sourceSchema = z.object({
+  content: z.string(),
+  data: z.object({
+    description: z.string().optional(),
+    items: z
+      .array(
+        z.union([
+          z.string(),
+          z.object({
+            iframe: z.object({ src: z.string() }),
+          }),
+        ])
+      )
+      .optional(),
+  }),
+});
+
+function SingleAppPage(props: inferSSRProps<typeof getStaticProps>) {
+  // If it's not production environment, it would be a better idea to inform that the App is disabled.
+  if (props.isAppDisabled) {
+    if (!IS_PRODUCTION) {
+      // TODO: Improve disabled App UI. This is just a placeholder.
+      return (
+        <div className="p-2">
+          This App seems to be disabled. If you are an admin, you can enable this app from{" "}
+          <Link href="/settings/admin/apps" className="cursor-pointer text-blue-500 underline">
+            here
+          </Link>
+        </div>
+      );
+    }
+
+    // Disabled App should give 404 any ways in production.
+    return null;
+  }
+
+  const { source, data } = props;
   return (
     <App
       name={data.name}
@@ -33,13 +76,16 @@ function SingleAppPage({ data, source }: inferSSRProps<typeof getStaticProps>) {
       website={data.url}
       email={data.email}
       licenseRequired={data.licenseRequired}
-      isProOnly={data.isProOnly}
-      images={source.data?.items as string[] | undefined}
+      teamsPlanRequired={data.teamsPlanRequired}
+      descriptionItems={source.data?.items as string[] | undefined}
+      isTemplate={data.isTemplate}
+      dependencies={data.dependencies}
+      concurrentMeetings={data.concurrentMeetings}
+      paid={data.paid}
       //   tos="https://zoom.us/terms"
       //   privacy="https://zoom.us/privacy"
       body={
         <>
-          {data.slug === "google-meet" && <ExisitingGoogleCal />}
           <div dangerouslySetInnerHTML={{ __html: md.render(source.content) }} />
         </>
       }
@@ -48,49 +94,89 @@ function SingleAppPage({ data, source }: inferSSRProps<typeof getStaticProps>) {
 }
 
 export const getStaticPaths: GetStaticPaths<{ slug: string }> = async () => {
-  const appStore = await prisma.app.findMany({ select: { slug: true } });
-  const paths = appStore.map(({ slug }) => ({ params: { slug } }));
+  let paths: { params: { slug: string } }[] = [];
+
+  try {
+    const appStore = await prisma.app.findMany({ select: { slug: true } });
+    paths = appStore.map(({ slug }) => ({ params: { slug } }));
+  } catch (e: unknown) {
+    if (e instanceof Prisma.PrismaClientInitializationError) {
+      // Database is not available at build time, but that's ok – we fall back to resolving paths on demand
+    } else {
+      throw e;
+    }
+  }
 
   return {
     paths,
-    fallback: false,
+    fallback: "blocking",
   };
 };
 
 export const getStaticProps = async (ctx: GetStaticPropsContext) => {
   if (typeof ctx.params?.slug !== "string") return { notFound: true };
 
-  const app = await prisma.app.findUnique({
-    where: { slug: ctx.params.slug },
+  const appMeta = await getAppWithMetadata({
+    slug: ctx.params?.slug,
   });
 
-  if (!app) return { notFound: true };
+  const appFromDb = await prisma.app.findUnique({
+    where: { slug: ctx.params.slug.toLowerCase() },
+  });
 
-  const singleApp = await getAppWithMetadata(app);
+  const isAppAvailableInFileSystem = appMeta;
+  const isAppDisabled = isAppAvailableInFileSystem && (!appFromDb || !appFromDb.enabled);
 
-  if (!singleApp) return { notFound: true };
+  if (!IS_PRODUCTION && isAppDisabled) {
+    return {
+      props: {
+        isAppDisabled: true as const,
+        data: {
+          ...appMeta,
+        },
+      },
+    };
+  }
 
-  const appDirname = app.dirName;
+  if (!appFromDb || !appMeta || isAppDisabled) return { notFound: true };
+
+  const isTemplate = appMeta.isTemplate;
+  const appDirname = path.join(isTemplate ? "templates" : "", appFromDb.dirName);
   const README_PATH = path.join(process.cwd(), "..", "..", `packages/app-store/${appDirname}/DESCRIPTION.md`);
   const postFilePath = path.join(README_PATH);
   let source = "";
 
   try {
-    /* If the app doesn't have a README we fallback to the package description */
     source = fs.readFileSync(postFilePath).toString();
+    source = source.replace(/{DESCRIPTION}/g, appMeta.description);
   } catch (error) {
+    /* If the app doesn't have a README we fallback to the package description */
     console.log(`No DESCRIPTION.md provided for: ${appDirname}`);
-    source = singleApp.description;
+    source = appMeta.description;
   }
 
-  const { content, data } = matter(source);
-
+  const result = matter(source);
+  const { content, data } = sourceSchema.parse({ content: result.content, data: result.data });
+  if (data.items) {
+    data.items = data.items.map((item) => {
+      if (typeof item === "string") {
+        return getAppAssetFullPath(item, {
+          dirName: appMeta.dirName,
+          isTemplate: appMeta.isTemplate,
+        });
+      }
+      return item;
+    });
+  }
   return {
     props: {
+      isAppDisabled: false as const,
       source: { content, data },
-      data: singleApp,
+      data: appMeta,
     },
   };
 };
+
+SingleAppPage.PageWrapper = PageWrapper;
 
 export default SingleAppPage;

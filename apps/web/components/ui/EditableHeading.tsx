@@ -1,8 +1,8 @@
 import classNames from "classnames";
-import React, { useState } from "react";
-import { ControllerRenderProps } from "react-hook-form";
+import { useState } from "react";
+import type { ControllerRenderProps } from "react-hook-form";
 
-import { Icon } from "@calcom/ui";
+import { Edit2 } from "@calcom/ui/components/icon";
 
 const EditableHeading = function EditableHeading({
   value,
@@ -16,12 +16,14 @@ const EditableHeading = function EditableHeading({
   const [isEditing, setIsEditing] = useState(false);
   const enableEditing = () => setIsEditing(true);
   return (
-    <div className="group relative cursor-pointer" onClick={enableEditing}>
-      <div className="flex items-center">
+    <div
+      className="group pointer-events-none relative truncate sm:pointer-events-auto"
+      onClick={enableEditing}>
+      <div className="flex cursor-pointer items-center">
         <label className="min-w-8 relative inline-block">
           <span className="whitespace-pre text-xl tracking-normal text-transparent">{value}&nbsp;</span>
           {!isEditing && isReady && (
-            <Icon.FiEdit2 className="ml-1 inline h-4 w-4 align-top text-gray-700 group-hover:text-gray-500" />
+            <Edit2 className=" text-subtle group-hover:text-subtle -mt-px ml-1 inline  h-3 w-3" />
           )}
           <input
             {...passThroughProps}
@@ -29,7 +31,7 @@ const EditableHeading = function EditableHeading({
             value={value}
             required
             className={classNames(
-              "absolute top-0 left-0 w-full cursor-pointer border-none bg-transparent p-0 align-top text-xl text-gray-900 hover:text-gray-700 focus:text-black focus:outline-none focus:ring-0"
+              "text-emphasis hover:text-default focus:text-emphasis absolute left-0 top-0 w-full cursor-pointer truncate border-none bg-transparent p-0 align-top text-xl focus:outline-none focus:ring-0"
             )}
             onFocus={(e) => {
               setIsEditing(true);

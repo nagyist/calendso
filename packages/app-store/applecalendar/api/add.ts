@@ -16,14 +16,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         id: req.session?.user?.id,
       },
       select: {
+        email: true,
         id: true,
       },
     });
 
     const data = {
       type: "apple_calendar",
-      key: symmetricEncrypt(JSON.stringify({ username, password }), process.env.CALENDSO_ENCRYPTION_KEY!),
+      key: symmetricEncrypt(
+        JSON.stringify({ username, password }),
+        process.env.CALENDSO_ENCRYPTION_KEY || ""
+      ),
       userId: user.id,
+      teamId: null,
       appId: "apple-calendar",
       invalid: false,
     };
@@ -32,6 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const dav = new CalendarService({
         id: 0,
         ...data,
+        user: { email: user.email },
       });
       await dav?.listCalendars();
       await prisma.credential.create({

@@ -1,15 +1,18 @@
-import { TFunction } from "next-i18next";
-import { useRouter } from "next/router";
-import { EventTypeSetupProps, FormValues } from "pages/event-types/[type]";
+import { Webhook as TbWebhook } from "lucide-react";
+import type { TFunction } from "next-i18next";
+import { Trans } from "next-i18next";
+import { useRouter } from "next/navigation";
+import type { EventTypeSetupProps, FormValues } from "pages/event-types/[type]";
 import { useMemo, useState, Suspense } from "react";
-import { UseFormReturn } from "react-hook-form";
-import { TbWebhook } from "react-icons/tb";
+import type { UseFormReturn } from "react-hook-form";
 
+import useLockedFieldsManager from "@calcom/features/ee/managed-event-types/hooks/useLockedFieldsManager";
+import { EventTypeEmbedButton, EventTypeEmbedDialog } from "@calcom/features/embed/EventTypeEmbed";
 import Shell from "@calcom/features/shell/Shell";
 import { classNames } from "@calcom/lib";
-import { CAL_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { HttpError } from "@calcom/lib/http-error";
+import { SchedulingType } from "@calcom/prisma/enums";
 import { trpc, TRPCClientError } from "@calcom/trpc/react";
 import {
   Button,
@@ -23,7 +26,6 @@ import {
   DropdownItem,
   DropdownMenuTrigger,
   HorizontalTabs,
-  Icon,
   Label,
   showToast,
   Skeleton,
@@ -32,8 +34,24 @@ import {
   VerticalDivider,
   VerticalTabs,
 } from "@calcom/ui";
+import {
+  Link as LinkIcon,
+  Calendar,
+  Clock,
+  Sliders,
+  Repeat,
+  Grid,
+  Zap,
+  Users,
+  ExternalLink,
+  Code,
+  Trash,
+  PhoneCall,
+  MoreHorizontal,
+  Loader,
+} from "@calcom/ui/components/icon";
 
-import { EmbedButton, EmbedDialog } from "@components/Embed";
+import type { AvailabilityOption } from "@components/eventtype/EventAvailabilityTab";
 
 type Props = {
   children: React.ReactNode;
@@ -46,6 +64,9 @@ type Props = {
   enabledWorkflowsNumber: number;
   formMethods: UseFormReturn<FormValues>;
   isUpdateMutationLoading?: boolean;
+  availability?: AvailabilityOption;
+  isUserOrganizationAdmin: boolean;
+  bookerUrl: string;
 };
 
 function getNavigation(props: {
@@ -54,6 +75,7 @@ function getNavigation(props: {
   enabledAppsNumber: number;
   enabledWorkflowsNumber: number;
   installedAppsNumber: number;
+  availability: AvailabilityOption | undefined;
 }) {
   const { eventType, t, enabledAppsNumber, installedAppsNumber, enabledWorkflowsNumber } = props;
   const duration =
@@ -63,44 +85,38 @@ function getNavigation(props: {
     {
       name: "event_setup_tab_title",
       href: `/event-types/${eventType.id}?tabName=setup`,
-      icon: Icon.FiLink,
+      icon: LinkIcon,
       info: `${duration} ${t("minute_timeUnit")}`, // TODO: Get this from props
-    },
-    {
-      name: "availability",
-      href: `/event-types/${eventType.id}?tabName=availability`,
-      icon: Icon.FiCalendar,
-      info: `default_schedule_name`, // TODO: Get this from props
     },
     {
       name: "event_limit_tab_title",
       href: `/event-types/${eventType.id}?tabName=limits`,
-      icon: Icon.FiClock,
+      icon: Clock,
       info: `event_limit_tab_description`,
     },
     {
       name: "event_advanced_tab_title",
       href: `/event-types/${eventType.id}?tabName=advanced`,
-      icon: Icon.FiSliders,
+      icon: Sliders,
       info: `event_advanced_tab_description`,
     },
     {
       name: "recurring",
       href: `/event-types/${eventType.id}?tabName=recurring`,
-      icon: Icon.FiRepeat,
+      icon: Repeat,
       info: `recurring_event_tab_description`,
     },
     {
       name: "apps",
       href: `/event-types/${eventType.id}?tabName=apps`,
-      icon: Icon.FiGrid,
+      icon: Grid,
       //TODO: Handle proper translation with count handling
       info: `${installedAppsNumber} apps, ${enabledAppsNumber} ${t("active")}`,
     },
     {
       name: "workflows",
       href: `/event-types/${eventType.id}?tabName=workflows`,
-      icon: Icon.FiZap,
+      icon: Zap,
       info: `${enabledWorkflowsNumber} ${t("active")}`,
     },
   ];
@@ -117,19 +133,26 @@ function EventTypeSingleLayout({
   enabledWorkflowsNumber,
   isUpdateMutationLoading,
   formMethods,
+  availability,
+  isUserOrganizationAdmin,
+  bookerUrl,
 }: Props) {
   const utils = trpc.useContext();
   const { t } = useLocale();
   const router = useRouter();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const hasPermsToDelete = currentUserMembership?.role !== "MEMBER" || !currentUserMembership;
+  const hasPermsToDelete =
+    currentUserMembership?.role !== "MEMBER" ||
+    !currentUserMembership ||
+    eventType.schedulingType === SchedulingType.MANAGED ||
+    isUserOrganizationAdmin;
 
   const deleteMutation = trpc.viewer.eventTypes.delete.useMutation({
     onSuccess: async () => {
       await utils.viewer.eventTypes.invalidate();
       showToast(t("event_type_deleted_successfully"), "success");
-      await router.push("/event-types");
+      router.push("/event-types");
       setDeleteDialogOpen(false);
     },
     onError: (err) => {
@@ -143,6 +166,12 @@ function EventTypeSingleLayout({
     },
   });
 
+  const { isManagedEventType, isChildrenManagedEventType } = useLockedFieldsManager(
+    eventType,
+    t("locked_fields_admin_description"),
+    t("locked_fields_member_description")
+  );
+
   // Define tab navigation here
   const EventTypeTabs = useMemo(() => {
     const navigation = getNavigation({
@@ -151,15 +180,49 @@ function EventTypeSingleLayout({
       enabledAppsNumber,
       installedAppsNumber,
       enabledWorkflowsNumber,
+      availability,
+    });
+
+    navigation.splice(1, 0, {
+      name: "availability",
+      href: `/event-types/${eventType.id}?tabName=availability`,
+      icon: Calendar,
+      info:
+        isManagedEventType || isChildrenManagedEventType
+          ? eventType.schedule === null
+            ? "members_default_schedule"
+            : isChildrenManagedEventType
+            ? `${
+                eventType.scheduleName
+                  ? `${eventType.scheduleName} - ${t("managed")}`
+                  : `default_schedule_name`
+              }`
+            : eventType.scheduleName ?? `default_schedule_name`
+          : eventType.scheduleName ?? `default_schedule_name`,
     });
     // If there is a team put this navigation item within the tabs
     if (team) {
       navigation.splice(2, 0, {
         name: "assignment",
         href: `/event-types/${eventType.id}?tabName=team`,
-        icon: Icon.FiUsers,
-        info: eventType.schedulingType === "COLLECTIVE" ? "collective" : "round_robin",
+        icon: Users,
+        info: `${t(eventType.schedulingType?.toLowerCase() ?? "")}${
+          isManagedEventType
+            ? ` - ${t("number_member", { count: formMethods.watch("children").length || 0 })}`
+            : ""
+        }`,
       });
+    }
+    const showWebhooks = !(isManagedEventType || isChildrenManagedEventType);
+    if (showWebhooks) {
+      if (team) {
+        navigation.push({
+          name: "instant_tab_title",
+          href: `/event-types/${eventType.id}?tabName=instant`,
+          icon: PhoneCall,
+          info: `instant_event_tab_description`,
+        });
+      }
       navigation.push({
         name: "webhooks",
         href: `/event-types/${eventType.id}?tabName=webhooks`,
@@ -168,101 +231,147 @@ function EventTypeSingleLayout({
       });
     }
     return navigation;
-  }, [t, eventType, installedAppsNumber, enabledAppsNumber, enabledWorkflowsNumber, team]);
+  }, [
+    t,
+    eventType,
+    enabledAppsNumber,
+    installedAppsNumber,
+    enabledWorkflowsNumber,
+    availability,
+    isManagedEventType,
+    isChildrenManagedEventType,
+    team,
+    formMethods,
+  ]);
 
-  const permalink = `${CAL_URL}/${team ? `team/${team.slug}` : eventType.users[0].username}/${
-    eventType.slug
-  }`;
+  const permalink = `${bookerUrl}/${
+    team ? `${!team.parentId ? "team/" : ""}${team.slug}` : eventType.users[0].username
+  }/${eventType.slug}`;
 
   const embedLink = `${team ? `team/${team.slug}` : eventType.users[0].username}/${eventType.slug}`;
+  const isManagedEvent = eventType.schedulingType === SchedulingType.MANAGED ? "_managed" : "";
 
   return (
     <Shell
       backPath="/event-types"
-      title={eventType.title + " | " + t("event_type")}
+      title={`${eventType.title} | ${t("event_type")}`}
       heading={eventType.title}
-      subtitle={eventType.description || ""}
       CTA={
         <div className="flex items-center justify-end">
-          <div className="hidden items-center rounded-md px-2 sm:flex sm:hover:bg-gray-100">
-            <Skeleton
-              as={Label}
-              htmlFor="hiddenSwitch"
-              className="mt-2 hidden cursor-pointer self-center whitespace-nowrap pr-2 sm:inline">
-              {t("hide_from_profile")}
-            </Skeleton>
-            <Switch
-              id="hiddenSwitch"
-              defaultChecked={formMethods.getValues("hidden")}
-              onCheckedChange={(e) => {
-                formMethods.setValue("hidden", e);
-              }}
-            />
-          </div>
-          <VerticalDivider className="hidden lg:block" />
+          {!eventType.metadata?.managedEventConfig && (
+            <>
+              <div
+                className={classNames(
+                  "sm:hover:bg-muted hidden cursor-pointer items-center rounded-md",
+                  formMethods.watch("hidden") ? "px-2" : "",
+                  "lg:flex"
+                )}>
+                {formMethods.watch("hidden") && (
+                  <Skeleton
+                    as={Label}
+                    htmlFor="hiddenSwitch"
+                    className="mt-2 hidden cursor-pointer self-center whitespace-nowrap pr-2 sm:inline">
+                    {t("hidden")}
+                  </Skeleton>
+                )}
+                <Tooltip
+                  sideOffset={4}
+                  content={
+                    formMethods.watch("hidden") ? t("show_eventtype_on_profile") : t("hide_from_profile")
+                  }
+                  side="bottom">
+                  <div className="self-center rounded-md p-2">
+                    <Switch
+                      id="hiddenSwitch"
+                      checked={!formMethods.watch("hidden")}
+                      onCheckedChange={(e) => {
+                        formMethods.setValue("hidden", !e);
+                      }}
+                    />
+                  </div>
+                </Tooltip>
+              </div>
+              <VerticalDivider className="hidden lg:block" />
+            </>
+          )}
 
           {/* TODO: Figure out why combined isnt working - works in storybook */}
-          <ButtonGroup combined containerProps={{ className: "border-gray-300 hidden lg:flex" }}>
-            {/* We have to warp this in tooltip as it has a href which disabels the tooltip on buttons */}
-            <Tooltip content={t("preview")}>
-              <Button
-                color="secondary"
-                target="_blank"
-                size="icon"
-                href={permalink}
-                rel="noreferrer"
-                StartIcon={Icon.FiExternalLink}
-              />
-            </Tooltip>
+          <ButtonGroup combined containerProps={{ className: "border-default hidden lg:flex" }}>
+            {!isManagedEventType && (
+              <>
+                {/* We have to warp this in tooltip as it has a href which disabels the tooltip on buttons */}
+                <Tooltip content={t("preview")} side="bottom" sideOffset={4}>
+                  <Button
+                    color="secondary"
+                    data-testid="preview-button"
+                    target="_blank"
+                    variant="icon"
+                    href={permalink}
+                    rel="noreferrer"
+                    StartIcon={ExternalLink}
+                  />
+                </Tooltip>
 
-            <Button
-              color="secondary"
-              size="icon"
-              StartIcon={Icon.FiLink}
-              tooltip={t("copy_link")}
-              onClick={() => {
-                navigator.clipboard.writeText(permalink);
-                showToast("Link copied!", "success");
-              }}
-            />
-            <EmbedButton
-              embedUrl={encodeURIComponent(embedLink)}
-              StartIcon={Icon.FiCode}
-              color="secondary"
-              size="icon"
-              tooltip={t("embed")}
-            />
-            <Button
-              color="secondary"
-              size="icon"
-              StartIcon={Icon.FiTrash}
-              tooltip={t("delete")}
-              disabled={!hasPermsToDelete}
-              onClick={() => setDeleteDialogOpen(true)}
-            />
+                <Button
+                  color="secondary"
+                  variant="icon"
+                  StartIcon={LinkIcon}
+                  tooltip={t("copy_link")}
+                  tooltipSide="bottom"
+                  tooltipOffset={4}
+                  onClick={() => {
+                    navigator.clipboard.writeText(permalink);
+                    showToast("Link copied!", "success");
+                  }}
+                />
+                <EventTypeEmbedButton
+                  embedUrl={encodeURIComponent(embedLink)}
+                  StartIcon={Code}
+                  color="secondary"
+                  variant="icon"
+                  namespace={eventType.slug}
+                  tooltip={t("embed")}
+                  tooltipSide="bottom"
+                  tooltipOffset={4}
+                  eventId={eventType.id}
+                />
+              </>
+            )}
+            {!isChildrenManagedEventType && (
+              <Button
+                color="destructive"
+                variant="icon"
+                StartIcon={Trash}
+                tooltip={t("delete")}
+                tooltipSide="bottom"
+                tooltipOffset={4}
+                disabled={!hasPermsToDelete}
+                onClick={() => setDeleteDialogOpen(true)}
+              />
+            )}
           </ButtonGroup>
 
           <VerticalDivider className="hidden lg:block" />
 
           <Dropdown>
-            <DropdownMenuTrigger className="block h-9 w-9 justify-center rounded-md border border-gray-200 bg-transparent text-gray-700 lg:hidden">
-              <Icon.FiMoreHorizontal className="group-hover:text-gray-800" />
+            <DropdownMenuTrigger asChild>
+              <Button className="lg:hidden" StartIcon={MoreHorizontal} variant="icon" color="secondary" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem className="focus:ring-gray-100">
+            <DropdownMenuContent style={{ minWidth: "200px" }}>
+              <DropdownMenuItem className="focus:ring-muted">
                 <DropdownItem
                   target="_blank"
                   type="button"
-                  StartIcon={Icon.FiExternalLink}
+                  StartIcon={ExternalLink}
                   href={permalink}
                   rel="noreferrer">
                   {t("preview")}
                 </DropdownItem>
               </DropdownMenuItem>
-              <DropdownMenuItem className="focus:ring-gray-100">
+              <DropdownMenuItem className="focus:ring-muted">
                 <DropdownItem
                   type="button"
-                  StartIcon={Icon.FiLink}
+                  StartIcon={LinkIcon}
                   onClick={() => {
                     navigator.clipboard.writeText(permalink);
                     showToast("Link copied!", "success");
@@ -270,62 +379,65 @@ function EventTypeSingleLayout({
                   {t("copy_link")}
                 </DropdownItem>
               </DropdownMenuItem>
-              <DropdownMenuItem className="focus:ring-gray-100">
+              <DropdownMenuItem className="focus:ring-muted">
                 <DropdownItem
                   type="button"
-                  StartIcon={Icon.FiTrash}
+                  color="destructive"
+                  StartIcon={Trash}
                   disabled={!hasPermsToDelete}
                   onClick={() => setDeleteDialogOpen(true)}>
                   {t("delete")}
                 </DropdownItem>
               </DropdownMenuItem>
-              <DropdownMenuSeparator className="block sm:hidden" />
-              <div className="flex items-center rounded-md py-1.5 px-4 sm:hidden sm:hover:bg-gray-100">
+              <DropdownMenuSeparator />
+              <div className="hover:bg-subtle flex h-9 cursor-pointer flex-row items-center justify-between px-4 py-2">
                 <Skeleton
                   as={Label}
                   htmlFor="hiddenSwitch"
-                  className="mt-2 inline cursor-pointer self-center pr-2 sm:hidden">
-                  {t("hide_from_profile")}
+                  className="mt-2 inline cursor-pointer self-center pr-2 ">
+                  {formMethods.watch("hidden") ? t("show_eventtype_on_profile") : t("hide_from_profile")}
                 </Skeleton>
                 <Switch
                   id="hiddenSwitch"
-                  defaultChecked={formMethods.getValues("hidden")}
+                  checked={!formMethods.watch("hidden")}
                   onCheckedChange={(e) => {
-                    formMethods.setValue("hidden", e);
+                    formMethods.setValue("hidden", !e);
                   }}
                 />
               </div>
             </DropdownMenuContent>
           </Dropdown>
-          <div className="border-l-2 border-gray-300" />
+          <div className="border-default border-l-2" />
           <Button
             className="ml-4 lg:ml-0"
             type="submit"
-            loading={formMethods.formState.isSubmitting || isUpdateMutationLoading}
+            loading={isUpdateMutationLoading}
             data-testid="update-eventtype"
             form="event-type-form">
             {t("save")}
           </Button>
         </div>
       }>
-      <Suspense fallback={<Icon.FiLoader />}>
-        <div className="-mt-2 flex flex-col xl:flex-row xl:space-x-8">
+      <Suspense fallback={<Loader />}>
+        <div className="flex flex-col xl:flex-row xl:space-x-6">
           <div className="hidden xl:block">
             <VerticalTabs
               className="primary-navigation"
               tabs={EventTypeTabs}
               sticky
-              linkProps={{ shallow: true }}
+              linkShallow
+              itemClassname="items-start"
+              iconClassName="md:mt-px"
             />
           </div>
           <div className="p-2 md:mx-0 md:p-0 xl:hidden">
-            <HorizontalTabs tabs={EventTypeTabs} linkProps={{ shallow: true }} />
+            <HorizontalTabs tabs={EventTypeTabs} linkShallow />
           </div>
           <div className="w-full ltr:mr-2 rtl:ml-2">
             <div
               className={classNames(
-                "mt-4 rounded-md  border-neutral-200 bg-white sm:mx-0 xl:mt-0",
-                disableBorder ? "border-0 xl:-mt-4 " : "p-2 md:border md:p-6"
+                "bg-default border-subtle  mt-4 rounded-md sm:mx-0 xl:mt-0",
+                disableBorder ? "border-0 " : "p-2 md:border md:p-6"
               )}>
               {children}
             </div>
@@ -336,17 +448,28 @@ function EventTypeSingleLayout({
         <ConfirmationDialogContent
           isLoading={deleteMutation.isLoading}
           variety="danger"
-          title={t("delete_event_type")}
-          confirmBtnText={t("confirm_delete_event_type")}
-          loadingText={t("confirm_delete_event_type")}
+          title={t(`delete${isManagedEvent}_event_type`)}
+          confirmBtnText={t(`confirm_delete_event_type`)}
+          loadingText={t(`confirm_delete_event_type`)}
           onConfirm={(e) => {
             e.preventDefault();
             deleteMutation.mutate({ id: eventType.id });
           }}>
-          {t("delete_event_type_description")}
+          <p className="mt-5">
+            <Trans
+              i18nKey={`delete${isManagedEvent}_event_type_description`}
+              components={{ li: <li />, ul: <ul className="ml-4 list-disc" /> }}>
+              <ul>
+                <li>Members assigned to this event type will also have their event types deleted.</li>
+                <li>
+                  Anyone who they&apos;ve shared their link with will no longer be able to book using it.
+                </li>
+              </ul>
+            </Trans>
+          </p>
         </ConfirmationDialogContent>
       </Dialog>
-      <EmbedDialog />
+      <EventTypeEmbedDialog />
     </Shell>
   );
 }

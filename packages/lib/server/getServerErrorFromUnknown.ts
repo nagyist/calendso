@@ -1,8 +1,10 @@
-import { PrismaClientKnownRequestError, NotFoundError } from "@prisma/client/runtime";
+import { PrismaClientKnownRequestError, NotFoundError } from "@prisma/client/runtime/library";
 import Stripe from "stripe";
-import { ZodError, ZodIssue } from "zod";
+import type { ZodIssue } from "zod";
+import { ZodError } from "zod";
 
 import { HttpError } from "../http-error";
+import { redactError } from "../redactError";
 
 function hasName(cause: unknown): cause is { name: string } {
   return !!cause && typeof cause === "object" && "name" in cause;
@@ -39,20 +41,30 @@ export function getServerErrorFromUnknown(cause: unknown): HttpError {
       message: "Unexpected error, please reach out for our customer support.",
     });
   }
+
   if (cause instanceof PrismaClientKnownRequestError) {
-    return new HttpError({ statusCode: 400, message: cause.message, cause });
+    return getHttpError({ statusCode: 400, cause });
   }
   if (cause instanceof NotFoundError) {
-    return new HttpError({ statusCode: 404, message: cause.message, cause });
+    return getHttpError({ statusCode: 404, cause });
   }
   if (cause instanceof Stripe.errors.StripeInvalidRequestError) {
-    return new HttpError({ statusCode: 400, message: cause.message, cause });
+    return getHttpError({ statusCode: 400, cause });
   }
   if (cause instanceof HttpError) {
-    return cause;
+    const redactedCause = redactError(cause);
+    return {
+      ...redactedCause,
+      name: cause.name,
+      message: cause.message ?? "",
+      cause: cause.cause,
+      url: cause.url,
+      statusCode: cause.statusCode,
+      method: cause.method,
+    };
   }
   if (cause instanceof Error) {
-    return new HttpError({ statusCode: 500, message: cause.message, cause });
+    return getHttpError({ statusCode: 500, cause });
   }
   if (typeof cause === "string") {
     // @ts-expect-error https://github.com/tc39/proposal-error-cause
@@ -63,4 +75,9 @@ export function getServerErrorFromUnknown(cause: unknown): HttpError {
     statusCode: 500,
     message: `Unhandled error of type '${typeof cause}'. Please reach out for our customer support.`,
   });
+}
+
+function getHttpError<T extends Error>({ statusCode, cause }: { statusCode: number; cause: T }) {
+  const redacted = redactError(cause);
+  return new HttpError({ statusCode, message: redacted.message, cause: redacted });
 }

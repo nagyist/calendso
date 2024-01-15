@@ -1,8 +1,9 @@
-import { Icon, SkeletonText } from "@calcom/ui";
+import { SkeletonText } from "@calcom/ui";
+import { Bell, Link as LinkIcon } from "@calcom/ui/components/icon";
 
 function SkeletonLoader() {
   return (
-    <ul className="animate-pulse divide-y divide-neutral-200 rounded-md border  border-gray-200 bg-white sm:overflow-hidden">
+    <ul className="divide-subtle border-subtle bg-default animate-pulse divide-y  rounded-md border sm:overflow-hidden">
       <SkeletonItem />
       <SkeletonItem />
       <SkeletonItem />
@@ -20,9 +21,9 @@ function SkeletonItem() {
           <div className="flex flex-col space-y-2">
             <SkeletonText className="h-4 w-16 sm:w-24" />
             <div className="flex">
-              <Icon.FiBell className="mt-0.5 mr-1.5 inline h-4 w-4 text-gray-200" />
+              <Bell className="mr-1.5 mt-0.5 inline h-4 w-4 text-gray-200" />
               <SkeletonText className="h-4 w-16 ltr:mr-2 rtl:ml-2 sm:w-28" />
-              <Icon.FiLink className="mt-0.5 mr-1.5 inline h-4 w-4 text-gray-200" />
+              <LinkIcon className="mr-1.5 mt-0.5 inline h-4 w-4 text-gray-200" />
               <SkeletonText className="h-4 w-28 sm:w-36" />
             </div>
           </div>

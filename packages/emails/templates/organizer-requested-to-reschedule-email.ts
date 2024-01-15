@@ -1,4 +1,5 @@
-import { createEvent, DateArray, Person } from "ics";
+import type { DateArray, Person } from "ics";
+import { createEvent } from "ics";
 
 import dayjs from "@calcom/dayjs";
 import { getRichDescription } from "@calcom/lib/CalEventParser";
@@ -6,21 +7,33 @@ import { APP_NAME } from "@calcom/lib/constants";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 
 import { renderEmail } from "..";
+import generateIcsString from "../lib/generateIcsString";
 import OrganizerScheduledEmail from "./organizer-scheduled-email";
 
 export default class OrganizerRequestedToRescheduleEmail extends OrganizerScheduledEmail {
   private metadata: { rescheduleLink: string };
   constructor(calEvent: CalendarEvent, metadata: { rescheduleLink: string }) {
-    super(calEvent);
+    super({ calEvent });
     this.metadata = metadata;
   }
-  protected getNodeMailerPayload(): Record<string, unknown> {
+  protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
     const toAddresses = [this.calEvent.organizer.email];
 
     return {
       icalEvent: {
         filename: "event.ics",
-        content: this.getiCalEventAsString(),
+        content: generateIcsString({
+          event: this.calEvent,
+          title: this.t("request_reschedule_title_organizer", {
+            attendee: this.calEvent.attendees[0].name,
+          }),
+          subtitle: this.t("request_reschedule_subtitle_organizer", {
+            attendee: this.calEvent.attendees[0].name,
+          }),
+          role: "organizer",
+          status: "CANCELLED",
+        }),
+        method: "REQUEST",
       },
       from: `${APP_NAME} <${this.getMailerOptions().from}>`,
       to: toAddresses.join(","),
@@ -29,7 +42,7 @@ export default class OrganizerRequestedToRescheduleEmail extends OrganizerSchedu
         name: this.calEvent.attendees[0].name,
         date: this.getFormattedDate(),
       })}`,
-      html: renderEmail("OrganizerRequestedToRescheduleEmail", {
+      html: await renderEmail("OrganizerRequestedToRescheduleEmail", {
         calEvent: this.calEvent,
         attendee: this.calEvent.organizer,
       }),
@@ -53,7 +66,7 @@ export default class OrganizerRequestedToRescheduleEmail extends OrganizerSchedu
         .slice(0, 6)
         .map((v, i) => (i === 1 ? v + 1 : v)) as DateArray,
       startInputType: "utc",
-      productId: "calendso/ics",
+      productId: "calcom/ics",
       title: this.t("ics_event_title", {
         eventType: this.calEvent.type,
         name: this.calEvent.attendees[0].name,
@@ -82,13 +95,11 @@ export default class OrganizerRequestedToRescheduleEmail extends OrganizerSchedu
   }
 
   // @OVERRIDE
-  protected getTextBody(title = "", subtitle = "", extraInfo = "", callToAction = ""): string {
+  protected getTextBody(title = "", subtitle = ""): string {
     return `
 ${this.t(title)}
 ${this.t(subtitle)}
-${extraInfo}
-${getRichDescription(this.calEvent)}
-${callToAction}
+${getRichDescription(this.calEvent, this.t, true)}
 `.trim();
   }
 }

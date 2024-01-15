@@ -1,9 +1,11 @@
+import type { DehydratedState } from "@tanstack/react-query";
 import classNames from "classnames";
-import { GetServerSidePropsContext } from "next";
+import type { GetServerSideProps, InferGetServerSidePropsType } from "next";
 import Link from "next/link";
-import { useRouter } from "next/router";
-import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
+import { encode } from "querystring";
 import { Toaster } from "react-hot-toast";
+import type { z } from "zod";
 
 import {
   sdkActionManager,
@@ -11,250 +13,328 @@ import {
   useEmbedStyles,
   useIsEmbed,
 } from "@calcom/embed-core/embed-iframe";
+import { handleUserRedirection } from "@calcom/features/booking-redirect/handle-user";
+import { getSlugOrRequestedSlug } from "@calcom/features/ee/organizations/lib/orgDomains";
+import { orgDomainConfig } from "@calcom/features/ee/organizations/lib/orgDomains";
 import { EventTypeDescriptionLazy as EventTypeDescription } from "@calcom/features/eventtypes/components";
 import EmptyPage from "@calcom/features/eventtypes/components/EmptyPage";
-import CustomBranding from "@calcom/lib/CustomBranding";
-import defaultEvents, {
-  getDynamicEventDescription,
-  getGroupName,
-  getUsernameList,
-  getUsernameSlugLink,
-} from "@calcom/lib/defaultEvents";
+import { DEFAULT_DARK_BRAND_COLOR, DEFAULT_LIGHT_BRAND_COLOR } from "@calcom/lib/constants";
+import { getUsernameList } from "@calcom/lib/defaultEvents";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
 import useTheme from "@calcom/lib/hooks/useTheme";
-import { collectPageParameters, telemetryEventTypes, useTelemetry } from "@calcom/lib/telemetry";
+import logger from "@calcom/lib/logger";
+import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
+import { stripMarkdown } from "@calcom/lib/stripMarkdown";
 import prisma from "@calcom/prisma";
+import { RedirectType, type EventType, type User } from "@calcom/prisma/client";
 import { baseEventTypeSelect } from "@calcom/prisma/selects";
-import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
-import { Icon, HeadSeo, AvatarGroup } from "@calcom/ui";
+import { EventTypeMetaDataSchema, teamMetadataSchema } from "@calcom/prisma/zod-utils";
+import { HeadSeo, UnpublishedEntity } from "@calcom/ui";
+import { UserAvatar } from "@calcom/ui";
+import { Verified, ArrowRight } from "@calcom/ui/components/icon";
 
-import { inferSSRProps } from "@lib/types/inferSSRProps";
-import { EmbedProps } from "@lib/withEmbedSsr";
+import type { EmbedProps } from "@lib/withEmbedSsr";
 
-import { AvatarSSR } from "@components/ui/AvatarSSR";
+import PageWrapper from "@components/PageWrapper";
 
 import { ssrInit } from "@server/lib/ssr";
 
-export default function User(props: inferSSRProps<typeof getServerSideProps> & EmbedProps) {
-  const { users, profile, eventTypes, isDynamicGroup, dynamicNames, dynamicUsernames, isSingleUser } = props;
-  const [user] = users; //To be used when we only have a single user, not dynamic group
-  useTheme(user.theme);
-  const { t } = useLocale();
-  const router = useRouter();
+import { getTemporaryOrgRedirect } from "../lib/getTemporaryOrgRedirect";
 
-  const groupEventTypes = props.users.some((user) => !user.allowDynamicBooking) ? (
-    <div className="space-y-6" data-testid="event-types">
-      <div className="overflow-hidden rounded-sm border dark:border-gray-900">
-        <div className="p-8 text-center text-gray-400 dark:text-white">
-          <h2 className="font-cal mb-2 text-3xl text-gray-600 dark:text-white">{" " + t("unavailable")}</h2>
-          <p className="mx-auto max-w-md">{t("user_dynamic_booking_disabled") as string}</p>
-        </div>
-      </div>
-    </div>
-  ) : (
-    <ul>
-      {eventTypes.map((type, index) => (
-        <li
-          key={index}
-          className="dark:bg-darkgray-100 group relative border-b border-neutral-200 bg-white  first:rounded-t-md last:rounded-b-md last:border-b-0 hover:bg-gray-50 dark:border-neutral-700 dark:hover:border-neutral-600">
-          <Icon.FiArrowRight className="absolute right-3 top-3 h-4 w-4 text-black opacity-0 transition-opacity group-hover:opacity-100 dark:text-white" />
-          <Link
-            href={getUsernameSlugLink({ users: props.users, slug: type.slug })}
-            className="flex justify-between px-6 py-4"
-            data-testid="event-type-link">
-            <div className="flex-shrink">
-              <p className="dark:text-darkgray-700 text-sm font-semibold text-gray-900">{type.title}</p>
-              <EventTypeDescription className="text-sm" eventType={type} />
-            </div>
-            <div className="mt-1 self-center">
-              <AvatarGroup
-                truncateAfter={4}
-                className="flex flex-shrink-0"
-                size="sm"
-                items={props.users.map((user) => ({
-                  alt: user.name || "",
-                  image: user.avatar || "",
-                }))}
-              />
-            </div>
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
+export function UserPage(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const { users, profile, eventTypes, markdownStrippedBio, entity } = props;
+  const searchParams = useSearchParams();
+
+  const [user] = users; //To be used when we only have a single user, not dynamic group
+  useTheme(profile.theme);
+  const { t } = useLocale();
+
+  const isBioEmpty = !user.bio || !user.bio.replace("<p><br></p>", "").length;
 
   const isEmbed = useIsEmbed(props.isEmbed);
   const eventTypeListItemEmbedStyles = useEmbedStyles("eventTypeListItem");
   const shouldAlignCentrallyInEmbed = useEmbedNonStylesConfig("align") !== "left";
   const shouldAlignCentrally = !isEmbed || shouldAlignCentrallyInEmbed;
-  const query = { ...router.query };
-  delete query.user; // So it doesn't display in the Link (and make tests fail)
-  const nameOrUsername = user.name || user.username || "";
-  const telemetry = useTelemetry();
+  const {
+    // So it doesn't display in the Link (and make tests fail)
+    user: _user,
+    orgSlug: _orgSlug,
+    redirect: _redirect,
+    ...query
+  } = useRouterQuery();
 
-  useEffect(() => {
+  const isRedirect = searchParams?.get("redirected") === "true" || false;
+  const fromUserNameRedirected = searchParams?.get("username") || "";
+  /*
+   const telemetry = useTelemetry();
+   useEffect(() => {
     if (top !== window) {
       //page_view will be collected automatically by _middleware.ts
       telemetry.event(telemetryEventTypes.embedView, collectPageParameters("/[user]"));
     }
-  }, [telemetry, router.asPath]);
+  }, [telemetry, router.asPath]); */
+
+  if (entity?.isUnpublished) {
+    return (
+      <div className="flex h-full min-h-[100dvh] items-center justify-center">
+        <UnpublishedEntity {...entity} />
+      </div>
+    );
+  }
+
   const isEventListEmpty = eventTypes.length === 0;
+
   return (
     <>
       <HeadSeo
-        title={isDynamicGroup ? dynamicNames.join(", ") : nameOrUsername}
-        description={
-          isDynamicGroup ? `Book events with ${dynamicUsernames.join(", ")}` : (user.bio as string) || ""
-        }
+        title={profile.name}
+        description={markdownStrippedBio}
         meeting={{
-          title: isDynamicGroup ? "" : `${user.bio}`,
-          profile: { name: `${profile.name}`, image: null },
-          users: isDynamicGroup
-            ? dynamicUsernames.map((username, index) => ({ username, name: dynamicNames[index] }))
-            : [{ username: `${user.username}`, name: `${user.name}` }],
+          title: markdownStrippedBio,
+          profile: { name: `${profile.name}`, image: user.avatarUrl || null },
+          users: [{ username: `${user.username}`, name: `${user.name}` }],
+        }}
+        nextSeoProps={{
+          noindex: !profile.allowSEOIndexing,
+          nofollow: !profile.allowSEOIndexing,
         }}
       />
-      <CustomBranding lightVal={profile.brandColor} darkVal={profile.darkBrandColor} />
 
-      <div
-        className={classNames(
-          shouldAlignCentrally ? "mx-auto" : "",
-          isEmbed ? "max-w-3xl" : "",
-          "dark:bg-darkgray-50"
-        )}>
+      <div className={classNames(shouldAlignCentrally ? "mx-auto" : "", isEmbed ? "max-w-3xl" : "")}>
         <main
           className={classNames(
             shouldAlignCentrally ? "mx-auto" : "",
-            isEmbed
-              ? " border-bookinglightest  dark:bg-darkgray-50 rounded-md border bg-white sm:dark:border-gray-600"
-              : "",
-            "max-w-3xl py-24 px-4"
+            isEmbed ? "border-booker border-booker-width  bg-default rounded-md border" : "",
+            "max-w-3xl px-4 py-24"
           )}>
-          {isSingleUser && ( // When we deal with a single user, not dynamic group
-            <div className="mb-8 text-center">
-              <AvatarSSR user={user} className="mx-auto mb-4 h-24 w-24" alt={nameOrUsername} />
-              <h1 className="font-cal mb-1 text-3xl text-gray-900 dark:text-white">
-                {nameOrUsername}
-                {user.verified && (
-                  <Icon.BadgeCheckIcon className="mx-1 -mt-1 inline h-6 w-6 text-blue-500 dark:text-white" />
-                )}
-              </h1>
-              <p className="dark:text-darkgray-600 text-s text-gray-500">{user.bio}</p>
+          {isRedirect && (
+            <div className="mb-8 rounded-md bg-blue-100 p-4 dark:border dark:bg-transparent dark:bg-transparent">
+              <h2 className="text-default mb-2 text-sm font-semibold dark:text-white">
+                {t("user_redirect_title", {
+                  username: fromUserNameRedirected,
+                })}{" "}
+                🏝️
+              </h2>
+              <p className="text-default text-sm">
+                {t("user_redirect_description", {
+                  profile: {
+                    username: user.username,
+                  },
+                  username: fromUserNameRedirected,
+                })}{" "}
+                😄
+              </p>
             </div>
           )}
-          <div
-            className={classNames(
-              "rounded-md ",
-              !isEventListEmpty &&
-                "border border-neutral-200 dark:border-neutral-700 dark:hover:border-neutral-600"
+          <div className="mb-8 text-center">
+            <UserAvatar
+              size="xl"
+              user={{
+                organizationId: profile.organization?.id,
+                name: profile.name,
+                username: profile.username,
+              }}
+              organization={
+                profile.organization?.id
+                  ? {
+                      id: profile.organization.id,
+                      slug: profile.organization.slug,
+                      requestedSlug: null,
+                    }
+                  : null
+              }
+            />
+            <h1 className="font-cal text-emphasis my-1 text-3xl" data-testid="name-title">
+              {profile.name}
+              {user.verified && (
+                <Verified className=" mx-1 -mt-1 inline h-6 w-6 fill-blue-500 text-white dark:text-black" />
+              )}
+            </h1>
+            {!isBioEmpty && (
+              <>
+                <div
+                  className="  text-subtle break-words text-sm [&_a]:text-blue-500 [&_a]:underline [&_a]:hover:text-blue-600"
+                  dangerouslySetInnerHTML={{ __html: props.safeBio }}
+                />
+              </>
             )}
+          </div>
+
+          <div
+            className={classNames("rounded-md ", !isEventListEmpty && "border-subtle border")}
             data-testid="event-types">
             {user.away ? (
-              <div className="overflow-hidden rounded-sm border dark:border-gray-900">
-                <div className="p-8 text-center text-gray-400 dark:text-white">
-                  <h2 className="font-cal mb-2 text-3xl text-gray-600 dark:text-white">
-                    😴{" " + t("user_away")}
-                  </h2>
+              <div className="overflow-hidden rounded-sm border ">
+                <div className="text-muted  p-8 text-center">
+                  <h2 className="font-cal text-default mb-2 text-3xl">😴{` ${t("user_away")}`}</h2>
                   <p className="mx-auto max-w-md">{t("user_away_description") as string}</p>
                 </div>
               </div>
-            ) : isDynamicGroup ? ( //When we deal with dynamic group (users > 1)
-              groupEventTypes
             ) : (
               eventTypes.map((type) => (
                 <div
                   key={type.id}
                   style={{ display: "flex", ...eventTypeListItemEmbedStyles }}
-                  className="dark:bg-darkgray-100 group relative border-b border-neutral-200 bg-white  first:rounded-t-md last:rounded-b-md last:border-b-0 hover:bg-gray-50 dark:border-neutral-700 dark:hover:border-neutral-600">
-                  <Icon.FiArrowRight className="absolute right-4 top-4 h-4 w-4 text-black opacity-0 transition-opacity group-hover:opacity-100 dark:text-white" />
+                  className="bg-default border-subtle dark:bg-muted dark:hover:bg-emphasis hover:bg-muted group relative border-b first:rounded-t-md last:rounded-b-md last:border-b-0">
+                  <ArrowRight className="text-emphasis  absolute right-4 top-4 h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
                   {/* Don't prefetch till the time we drop the amount of javascript in [user][type] page which is impacting score for [user] page */}
-                  <Link
-                    prefetch={false}
-                    href={{
-                      pathname: `/${user.username}/${type.slug}`,
-                      query,
-                    }}
-                    onClick={async () => {
-                      sdkActionManager?.fire("eventTypeSelected", {
-                        eventType: type,
-                      });
-                    }}
-                    className="block w-full p-5"
-                    data-testid="event-type-link">
-                    <div className="flex flex-wrap items-center">
-                      <h2 className="dark:text-darkgray-700 pr-2 text-sm font-semibold text-gray-700">
-                        {type.title}
-                      </h2>
-                    </div>
-                    <EventTypeDescription eventType={type} />
-                  </Link>
+                  <div className="block w-full p-5">
+                    <Link
+                      prefetch={false}
+                      href={{
+                        pathname: `/${user.username}/${type.slug}`,
+                        query,
+                      }}
+                      passHref
+                      onClick={async () => {
+                        sdkActionManager?.fire("eventTypeSelected", {
+                          eventType: type,
+                        });
+                      }}
+                      data-testid="event-type-link">
+                      <div className="flex flex-wrap items-center">
+                        <h2 className=" text-default pr-2 text-sm font-semibold">{type.title}</h2>
+                      </div>
+                      <EventTypeDescription eventType={type} isPublic={true} shortenDescription />
+                    </Link>
+                  </div>
                 </div>
               ))
             )}
           </div>
-          {isEventListEmpty && <EmptyPage name={user.name ?? "User"} />}
+
+          {isEventListEmpty && <EmptyPage name={profile.name || "User"} />}
         </main>
         <Toaster position="bottom-right" />
       </div>
     </>
   );
 }
-User.isThemeSupported = true;
+
+UserPage.isBookingPage = true;
+UserPage.PageWrapper = PageWrapper;
 
 const getEventTypesWithHiddenFromDB = async (userId: number) => {
-  return (
-    await prisma.eventType.findMany({
-      where: {
-        AND: [
-          {
-            teamId: null,
-          },
-          {
-            OR: [
-              {
-                userId,
-              },
-              {
-                users: {
-                  some: {
-                    id: userId,
-                  },
+  const eventTypes = await prisma.eventType.findMany({
+    where: {
+      AND: [
+        {
+          teamId: null,
+        },
+        {
+          OR: [
+            {
+              userId,
+            },
+            {
+              users: {
+                some: {
+                  id: userId,
                 },
               },
-            ],
-          },
-        ],
-      },
-      orderBy: [
-        {
-          position: "desc",
-        },
-        {
-          id: "asc",
+            },
+          ],
         },
       ],
-      select: {
-        ...baseEventTypeSelect,
-        metadata: true,
+    },
+    orderBy: [
+      {
+        position: "desc",
       },
-    })
-  ).map((eventType) => ({
-    ...eventType,
-    metadata: EventTypeMetaDataSchema.parse(eventType.metadata),
-  }));
+      {
+        id: "asc",
+      },
+    ],
+    select: {
+      ...baseEventTypeSelect,
+      metadata: true,
+    },
+  });
+  // map and filter metadata, exclude eventType entirely when faulty metadata is found.
+  // report error to exception so we don't lose the error.
+  return eventTypes.reduce<typeof eventTypes>((eventTypes, eventType) => {
+    const parsedMetadata = EventTypeMetaDataSchema.safeParse(eventType.metadata);
+    if (!parsedMetadata.success) {
+      logger.error(parsedMetadata.error);
+      return eventTypes;
+    }
+    eventTypes.push({
+      ...eventType,
+      metadata: parsedMetadata.data,
+    });
+    return eventTypes;
+  }, []);
 };
 
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-  const crypto = await import("crypto");
+export type UserPageProps = {
+  trpcState: DehydratedState;
+  profile: {
+    name: string;
+    image: string;
+    theme: string | null;
+    brandColor: string;
+    darkBrandColor: string;
+    organization: {
+      requestedSlug: string | null;
+      slug: string | null;
+      id: number | null;
+    };
+    allowSEOIndexing: boolean;
+    username: string | null;
+  };
+  users: Pick<User, "away" | "name" | "username" | "bio" | "verified" | "avatarUrl">[];
+  themeBasis: string | null;
+  markdownStrippedBio: string;
+  safeBio: string;
+  entity: {
+    isUnpublished?: boolean;
+    orgSlug?: string | null;
+    name?: string | null;
+  };
+  eventTypes: ({
+    descriptionAsSafeHTML: string;
+    metadata: z.infer<typeof EventTypeMetaDataSchema>;
+  } & Pick<
+    EventType,
+    | "id"
+    | "title"
+    | "slug"
+    | "length"
+    | "hidden"
+    | "lockTimeZoneToggleOnBookingPage"
+    | "requiresConfirmation"
+    | "requiresBookerEmailVerification"
+    | "price"
+    | "currency"
+    | "recurringEvent"
+  >)[];
+} & EmbedProps;
 
+export const getServerSideProps: GetServerSideProps<UserPageProps> = async (context) => {
+  const ssr = await ssrInit(context);
+  const { currentOrgDomain, isValidOrgDomain } = orgDomainConfig(context.req, context.params?.orgSlug);
   const usernameList = getUsernameList(context.query.user as string);
+  const isOrgContext = isValidOrgDomain && currentOrgDomain;
   const dataFetchStart = Date.now();
-  const users = await prisma.user.findMany({
+  let outOfOffice = false;
+
+  if (usernameList.length === 1) {
+    const result = await handleUserRedirection({ username: usernameList[0] });
+    if (result && result.outOfOffice) {
+      outOfOffice = true;
+    }
+    if (result && result.redirect?.destination) {
+      return result;
+    }
+  }
+
+  const usersWithoutAvatar = await prisma.user.findMany({
     where: {
       username: {
         in: usernameList,
       },
+      organization: isOrgContext ? getSlugOrRequestedSlug(currentOrgDomain) : null,
     },
     select: {
       id: true,
@@ -262,53 +342,90 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
       email: true,
       name: true,
       bio: true,
+      metadata: true,
       brandColor: true,
       darkBrandColor: true,
-      avatar: true,
+      avatarUrl: true,
+      organizationId: true,
+      organization: {
+        select: {
+          slug: true,
+          name: true,
+          metadata: true,
+        },
+      },
       theme: true,
       away: true,
       verified: true,
       allowDynamicBooking: true,
+      allowSEOIndexing: true,
     },
   });
 
-  if (!users.length) {
+  const isDynamicGroup = usersWithoutAvatar.length > 1;
+  if (isDynamicGroup) {
+    return {
+      redirect: {
+        permanent: false,
+        destination: `/${usernameList.join("+")}/dynamic`,
+      },
+    } as {
+      redirect: {
+        permanent: false;
+        destination: string;
+      };
+    };
+  }
+
+  const users = usersWithoutAvatar.map((user) => ({
+    ...user,
+    organization: {
+      ...user.organization,
+      metadata: user.organization?.metadata ? teamMetadataSchema.parse(user.organization.metadata) : null,
+    },
+    avatar: `/${user.username}/avatar.png`,
+  }));
+
+  if (!isOrgContext) {
+    const redirect = await getTemporaryOrgRedirect({
+      slug: usernameList[0],
+      redirectType: RedirectType.User,
+      eventTypeSlug: null,
+      currentQuery: context.query,
+    });
+
+    if (redirect) {
+      return redirect;
+    }
+  }
+
+  if (!users.length || (!isValidOrgDomain && !users.some((user) => user.organizationId === null))) {
     return {
       notFound: true,
     } as {
       notFound: true;
     };
   }
-  const isDynamicGroup = users.length > 1;
 
-  const dynamicNames = isDynamicGroup
-    ? users.map((user) => {
-        return user.name || "";
-      })
-    : [];
   const [user] = users; //to be used when dealing with single user, not dynamic group
 
-  const profile = isDynamicGroup
-    ? {
-        name: getGroupName(dynamicNames),
-        image: null,
-        theme: null,
-        weekStart: "Sunday",
-        brandColor: "",
-        darkBrandColor: "",
-        allowDynamicBooking: !users.some((user) => {
-          return !user.allowDynamicBooking;
-        }),
-      }
-    : {
-        name: user.name || user.username,
-        image: user.avatar,
-        theme: user.theme,
-        brandColor: user.brandColor,
-        darkBrandColor: user.darkBrandColor,
-      };
+  const profile = {
+    name: user.name || user.username || "",
+    image: user.avatar,
+    theme: user.theme,
+    brandColor: user.brandColor ?? DEFAULT_LIGHT_BRAND_COLOR,
+    avatarUrl: user.avatarUrl,
+    darkBrandColor: user.darkBrandColor ?? DEFAULT_DARK_BRAND_COLOR,
+    allowSEOIndexing: user.allowSEOIndexing ?? true,
+    username: user.username,
+    organization: {
+      id: user.organizationId,
+      slug: user.organization?.slug ?? null,
+      requestedSlug: user.organization?.metadata?.requestedSlug ?? null,
+    },
+  };
 
-  const eventTypesWithHidden = isDynamicGroup ? [] : await getEventTypesWithHiddenFromDB(user.id);
+  const eventTypesWithHidden = await getEventTypesWithHiddenFromDB(user.id);
   const dataFetchEnd = Date.now();
   if (context.query.log === "1") {
     context.res.setHeader("X-Data-Fetch-Time", `${dataFetchEnd - dataFetchStart}ms`);
@@ -318,33 +435,53 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
   const eventTypes = eventTypesRaw.map((eventType) => ({
     ...eventType,
     metadata: EventTypeMetaDataSchema.parse(eventType.metadata || {}),
+    descriptionAsSafeHTML: markdownToSafeHTML(eventType.description),
   }));
 
-  const isSingleUser = users.length === 1;
-  const dynamicUsernames = isDynamicGroup
-    ? users.map((user) => {
-        return user.username || "";
-      })
-    : [];
+  // if profile only has one public event-type, redirect to it
+  if (eventTypes.length === 1 && context.query.redirect !== "false" && !outOfOffice) {
+    // Redirect but don't change the URL
+    const urlDestination = `/${user.username}/${eventTypes[0].slug}`;
+    const { query } = context;
+    const urlQuery = new URLSearchParams(encode(query));
+
+    return {
+      redirect: {
+        permanent: false,
+        destination: `${urlDestination}?${urlQuery}`,
+      },
+    };
+  }
+
+  const safeBio = markdownToSafeHTML(user.bio) || "";
+
+  const markdownStrippedBio = stripMarkdown(user?.bio || "");
+  const org = usersWithoutAvatar[0].organization;
 
   return {
     props: {
-      users,
-      profile,
-      user: {
-        emailMd5: crypto.createHash("md5").update(user.email).digest("hex"),
+      users: users.map((user) => ({
+        name: user.name,
+        username: user.username,
+        bio: user.bio,
+        avatarUrl: user.avatarUrl,
+        away: usernameList.length === 1 ? outOfOffice : user.away,
+        verified: user.verified,
+      })),
+      entity: {
+        isUnpublished: org?.slug === null,
+        orgSlug: currentOrgDomain,
+        name: org?.name ?? null,
       },
-      eventTypes: isDynamicGroup
-        ? defaultEvents.map((event) => {
-            event.description = getDynamicEventDescription(dynamicUsernames, event.slug);
-            return event;
-          })
-        : eventTypes,
+      eventTypes,
+      safeBio,
+      profile,
+      // Dynamic group has no theme preference right now. It uses system theme.
+      themeBasis: user.username,
       trpcState: ssr.dehydrate(),
-      isDynamicGroup,
-      dynamicNames,
-      dynamicUsernames,
-      isSingleUser,
+      markdownStrippedBio,
     },
   };
 };
+
+export default UserPage;

@@ -4,16 +4,8 @@ import { renderEmail } from "../";
 import OrganizerScheduledEmail from "./organizer-scheduled-email";
 
 export default class OrganizerPaymentRefundFailedEmail extends OrganizerScheduledEmail {
-  protected getNodeMailerPayload(): Record<string, unknown> {
-    const toAddresses = [this.calEvent.organizer.email];
-    if (this.calEvent.team) {
-      this.calEvent.team.members.forEach((member) => {
-        const memberAttendee = this.calEvent.attendees.find((attendee) => attendee.name === member);
-        if (memberAttendee) {
-          toAddresses.push(memberAttendee.email);
-        }
-      });
-    }
+  protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
+    const toAddresses = [this.teamMember?.email || this.calEvent.organizer.email];
 
     return {
       from: `${APP_NAME} <${this.getMailerOptions().from}>`,
@@ -23,7 +15,7 @@ export default class OrganizerPaymentRefundFailedEmail extends OrganizerSchedule
         name: this.calEvent.attendees[0].name,
         date: this.getFormattedDate(),
       })}`,
-      html: renderEmail("OrganizerPaymentRefundFailedEmail", {
+      html: await renderEmail("OrganizerPaymentRefundFailedEmail", {
         calEvent: this.calEvent,
         attendee: this.calEvent.organizer,
       }),

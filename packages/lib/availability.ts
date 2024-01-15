@@ -1,6 +1,7 @@
 import type { Availability } from "@prisma/client";
 
-import dayjs, { ConfigType } from "@calcom/dayjs";
+import type { ConfigType } from "@calcom/dayjs";
+import dayjs from "@calcom/dayjs";
 import type { Schedule, TimeRange, WorkingHours } from "@calcom/types/schedule";
 
 import { nameOfDay } from "./weekday";
@@ -153,16 +154,12 @@ export function availabilityAsString(
   };
 
   const timeSpan = (availability: Availability) => {
-    return (
-      new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "numeric", hour12 }).format(
-        new Date(availability.startTime.toISOString().slice(0, -1))
-      ) +
-      " - " +
-      new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "numeric", hour12 }).format(
-        new Date(availability.endTime.toISOString().slice(0, -1))
-      )
-    );
+    return `${new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "numeric", hour12 }).format(
+      new Date(availability.startTime.toISOString().slice(0, -1))
+    )} - ${new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "numeric", hour12 }).format(
+      new Date(availability.endTime.toISOString().slice(0, -1))
+    )}`;
   };
 
-  return weekSpan(availability) + ", " + timeSpan(availability);
+  return `${weekSpan(availability)}, ${timeSpan(availability)}`;
 }

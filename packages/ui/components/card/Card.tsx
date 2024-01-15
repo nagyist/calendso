@@ -1,14 +1,105 @@
+// @TODO: turn this into a more generic component that has the same Props API as MUI https://mui.com/material-ui/react-card/
+import type { VariantProps } from "class-variance-authority";
+import { cva } from "class-variance-authority";
 import Link from "next/link";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import React from "react";
 
 import classNames from "@calcom/lib/classNames";
+import { ArrowRight } from "@calcom/ui/components/icon";
 
 import { Button } from "../button";
 
-export type BaseCardProps = {
+const cvaCardTypeByVariant = cva("", {
+  // Variants won't have any style by default. Style will only be applied if the variants are combined.
+  // So, style is defined in compoundVariants.
+  variants: {
+    variant: {
+      basic: "",
+      ProfileCard: "",
+      SidebarCard: "",
+    },
+    structure: {
+      image: "",
+      card: "",
+      title: "",
+      description: "",
+    },
+  },
+  compoundVariants: [
+    // Style for Basic Variants types
+    {
+      variant: "basic",
+      structure: "image",
+      className: "w-10 h-auto",
+    },
+    {
+      variant: "basic",
+      structure: "card",
+      className: "p-5",
+    },
+    {
+      variant: "basic",
+      structure: "title",
+      className: "text-base mt-4",
+    },
+    {
+      variant: "basic",
+      structure: "description",
+      className: "text-sm leading-[18px] text-subtle font-normal",
+    },
+
+    // Style for ProfileCard Variant Types
+    {
+      variant: "ProfileCard",
+      structure: "image",
+      className: "w-9 h-auto rounded-full mb-4s",
+    },
+    {
+      variant: "ProfileCard",
+      structure: "card",
+      className: "w-80 p-4 hover:bg-subtle",
+    },
+    {
+      variant: "ProfileCard",
+      structure: "title",
+      className: "text-base",
+    },
+    {
+      variant: "ProfileCard",
+      structure: "description",
+      className: "text-sm leading-[18px] text-subtle font-normal",
+    },
+
+    // Style for SidebarCard Variant Types
+    {
+      variant: "SidebarCard",
+      structure: "image",
+      className: "w-9 h-auto rounded-full mb-4s",
+    },
+    {
+      variant: "SidebarCard",
+      structure: "card",
+      className: "w-full p-3 border border-subtle",
+    },
+    {
+      variant: "SidebarCard",
+      structure: "title",
+      className: "text-sm font-cal",
+    },
+    {
+      variant: "SidebarCard",
+      structure: "description",
+      className: "text-xs text-default line-clamp-2",
+    },
+  ],
+});
+
+type CVACardType = Required<Pick<VariantProps<typeof cvaCardTypeByVariant>, "variant">>;
+
+export interface BaseCardProps extends CVACardType {
   image?: string;
-  variant: keyof typeof cardTypeByVariant;
+  icon?: ReactNode;
   imageProps?: JSX.IntrinsicElements["img"];
   title: string;
   description: ReactNode;
@@ -24,32 +115,13 @@ export type BaseCardProps = {
   };
   mediaLink?: string;
   thumbnailUrl?: string;
-};
-
-const cardTypeByVariant = {
-  AppStore: {
-    image: "w-10 h-auto",
-    card: "p-5 w-64",
-    title: "text-base",
-    description: "text-sm leading-[18px] text-gray-500 font-normal",
-  },
-  ProfileCard: {
-    image: "w-9 h-auto rounded-full mb-4s",
-    card: "w-80 p-4 hover:bg-gray-100",
-    title: "text-base",
-    description: "text-sm leading-[18px] text-gray-500 font-normal",
-  },
-  SidebarCard: {
-    image: "w-9 h-auto rounded-full mb-4s",
-    card: "w-full p-3 border border-gray-200",
-    title: "text-sm font-cal",
-    description: "text-xs text-gray-600 line-clamp-2",
-  },
-};
+  structure?: string;
+}
 
 export function Card({
   image,
   title,
+  icon,
   description,
   variant,
   actionButton,
@@ -59,38 +131,46 @@ export function Card({
   thumbnailUrl,
   learnMore,
 }: BaseCardProps) {
+  const LinkComponent = learnMore && learnMore.href.startsWith("https") ? "a" : Link;
   return (
     <div
       className={classNames(
         containerProps?.className,
-        cardTypeByVariant[variant].card,
-        "border-1 rounded-md border-gray-200 bg-white"
+        cvaCardTypeByVariant({ variant, structure: "card" }),
+        "bg-default border-subtle text-default flex flex-col justify-between rounded-md border"
       )}
+      data-testid="card-container"
       {...containerProps}>
-      {image && (
-        <img
-          src={image}
-          // Stops eslint complaining - not smart enough to realise it comes from ...imageProps
-          alt={imageProps?.alt}
-          className={classNames(imageProps?.className, cardTypeByVariant[variant].image, "mb-4")}
-          {...imageProps}
-        />
-      )}
-      <h5
-        title={title}
-        className={classNames(
-          cardTypeByVariant[variant].title,
-          "line-clamp-1 font-bold leading-5 text-gray-900"
-        )}>
-        {title}
-      </h5>
-      {description && (
-        <p
-          title={description.toString()}
-          className={classNames(cardTypeByVariant[variant].description, "pt-1")}>
-          {description}
-        </p>
-      )}
+      <div>
+        {icon && icon}
+        {image && (
+          <img
+            src={image}
+            // Stops eslint complaining - not smart enough to realise it comes from ...imageProps
+            alt={imageProps?.alt}
+            className={classNames(
+              imageProps?.className,
+              cvaCardTypeByVariant({ variant, structure: "image" })
+            )}
+            {...imageProps}
+          />
+        )}
+        <h5
+          title={title}
+          className={classNames(
+            cvaCardTypeByVariant({ variant, structure: "title" }),
+            "text-emphasis line-clamp-1 font-bold leading-5"
+          )}>
+          {title}
+        </h5>
+        {description && (
+          <p
+            title={description.toString()}
+            className={classNames(cvaCardTypeByVariant({ variant, structure: "description" }), "pt-1")}>
+            {description}
+          </p>
+        )}
+      </div>
       {variant === "SidebarCard" && (
         <a
           onClick={actionButton?.onClick}
@@ -100,7 +180,7 @@ export function Card({
           className="group relative my-3 flex aspect-video items-center overflow-hidden rounded">
           <div className="absolute inset-0 bg-black bg-opacity-50 transition-opacity group-hover:bg-opacity-40" />
           <svg
-            className="absolute top-1/2 left-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 transform rounded-full text-white shadow-lg hover:-mt-px"
+            className="text-inverted absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 transform rounded-full shadow-lg hover:-mt-px"
             viewBox="0 0 32 32"
             fill="none"
             xmlns="http://www.w3.org/2000/svg">
@@ -120,30 +200,36 @@ export function Card({
           <img alt="play feature video" src={thumbnailUrl} />
         </a>
       )}
-      {variant === "AppStore" && (
-        <Button color="secondary" href={actionButton?.href} size="lg" className="mt-10 w-full">
-          {/* Force it to be centered as this usecase of a button is off - doesnt meet normal sizes */}
-          <div className="mx-auto">{actionButton?.child}</div>
-        </Button>
-      )}
+
+      {/* TODO: this should be CardActions https://mui.com/material-ui/api/card-actions/ */}
+      <div>
+        {variant === "basic" && (
+          <Button color="secondary" href={actionButton?.href} className="mt-10" EndIcon={ArrowRight}>
+            {actionButton?.child}
+          </Button>
+        )}
+      </div>
+
       {variant === "SidebarCard" && (
         <div className="mt-2 flex items-center justify-between">
           {learnMore && (
-            <Link
+            <LinkComponent
               href={learnMore.href}
               onClick={actionButton?.onClick}
               target="_blank"
               rel="noreferrer"
-              className="text-xs font-medium">
+              className="text-default text-xs font-medium">
               {learnMore.text}
-            </Link>
+            </LinkComponent>
           )}
-          <button
-            className="p-0 text-xs font-normal text-gray-600 hover:text-gray-800"
-            color="minimal"
-            onClick={actionButton?.onClick}>
-            {actionButton?.child}
-          </button>
+          {actionButton?.child && (
+            <button
+              className="text-default hover:text-emphasis p-0 text-xs font-normal"
+              color="minimal"
+              onClick={actionButton?.onClick}>
+              {actionButton?.child}
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -1,45 +1,34 @@
 import { $generateHtmlFromNodes, $generateNodesFromDOM } from "@lexical/html";
 import { $isLinkNode, TOGGLE_LINK_COMMAND } from "@lexical/link";
 import {
+  $isListNode,
   INSERT_ORDERED_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
-  REMOVE_LIST_COMMAND,
-  $isListNode,
   ListNode,
+  REMOVE_LIST_COMMAND,
 } from "@lexical/list";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createHeadingNode, $isHeadingNode } from "@lexical/rich-text";
-import { $wrapNodes, $isAtNodeEnd } from "@lexical/selection";
+import { $isAtNodeEnd, $wrapNodes } from "@lexical/selection";
 import { $getNearestNodeOfType, mergeRegister } from "@lexical/utils";
 import classNames from "classnames";
+import type { EditorState, GridSelection, LexicalEditor, NodeSelection, RangeSelection } from "lexical";
 import {
-  SELECTION_CHANGE_COMMAND,
-  FORMAT_TEXT_COMMAND,
-  $getSelection,
-  $isRangeSelection,
   $createParagraphNode,
-  RangeSelection,
-  NodeSelection,
-  GridSelection,
   $getRoot,
+  $getSelection,
   $insertNodes,
-  LexicalEditor,
-  EditorState,
+  $isRangeSelection,
+  FORMAT_TEXT_COMMAND,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import {
-  Icon,
-  Dropdown,
-  DropdownMenuTrigger,
-  DropdownMenuItem,
-  DropdownItem,
-  DropdownMenuContent,
-  Button,
-} from "@calcom/ui";
-
-import { TextEditorProps } from "../Editor";
+import { Button } from "../../button";
+import { Dropdown, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../form/dropdown";
+import { Bold, ChevronDown, Italic, Link } from "../../icon";
+import type { TextEditorProps } from "../Editor";
 import { AddVariablesDropdown } from "./AddVariablesDropdown";
 
 const LowPriority = 1;
@@ -75,7 +64,7 @@ function FloatingLinkEditor({ editor }: { editor: LexicalEditor }) {
   const mouseDownRef = useRef(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [linkUrl, setLinkUrl] = useState("");
-  const [isEditMode, setEditMode] = useState(false);
+  const [isEditMode, setEditMode] = useState(true);
   const [lastSelection, setLastSelection] = useState<RangeSelection | NodeSelection | GridSelection | null>(
     null
   );
@@ -351,22 +340,49 @@ export default function ToolbarPlugin(props: TextEditorProps) {
   };
 
   useEffect(() => {
-    editor.update(() => {
-      const parser = new DOMParser();
-      const dom = parser.parseFromString(props.getText(), "text/html");
+    if (!props.firstRender) {
+      editor.update(() => {
+        const root = $getRoot();
+        if (root) {
+          editor.update(() => {
+            const parser = new DOMParser();
+            // Create a new TextNode
+            const dom = parser.parseFromString(props.getText(), "text/html");
 
-      const nodes = $generateNodesFromDOM(editor, dom);
+            const nodes = $generateNodesFromDOM(editor, dom);
+            const paragraph = $createParagraphNode();
+            root.clear().append(paragraph);
+            paragraph.select();
+            $insertNodes(nodes);
+          });
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.updateTemplate]);
 
-      $getRoot().select();
-      $insertNodes(nodes);
+  useEffect(() => {
+    if (props.setFirstRender) {
+      props.setFirstRender(false);
+      editor.update(() => {
+        const parser = new DOMParser();
+        const dom = parser.parseFromString(props.getText(), "text/html");
 
-      editor.registerUpdateListener(({ editorState }) => {
-        editorState.read(() => {
-          const textInHtml = $generateHtmlFromNodes(editor);
-          props.setText(textInHtml);
+        const nodes = $generateNodesFromDOM(editor, dom);
+
+        $getRoot().select();
+        $insertNodes(nodes);
+
+        editor.registerUpdateListener(({ editorState, prevEditorState }) => {
+          editorState.read(() => {
+            const textInHtml = $generateHtmlFromNodes(editor).replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+            props.setText(textInHtml);
+          });
+          if (!prevEditorState._selection) editor.blur();
         });
       });
-    });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -378,7 +394,7 @@ export default function ToolbarPlugin(props: TextEditorProps) {
       }),
       editor.registerCommand(
         SELECTION_CHANGE_COMMAND,
-        (_payload, newEditor) => {
+        (_payload, _newEditor) => {
           updateToolbar();
           return false;
         },
@@ -394,23 +410,24 @@ export default function ToolbarPlugin(props: TextEditorProps) {
       editor.dispatchCommand(TOGGLE_LINK_COMMAND, null);
     }
   }, [editor, isLink]);
-  console.log("TEST", blockTypeToBlockName[blockType]);
+
+  if (!props.editable) return <></>;
   return (
     <div className="toolbar flex" ref={toolbarRef}>
       <>
         {!props.excludedToolbarItems?.includes("blockType") && supportedBlockTypes.has(blockType) && (
           <>
             <Dropdown>
-              <DropdownMenuTrigger className="toolbar-item w-36 text-gray-500">
+              <DropdownMenuTrigger className="text-subtle">
                 <>
-                  <span className={"icon block-type " + blockType} />
-                  <span className="text hidden text-gray-700 sm:flex">
+                  <span className={`icon${blockType}`} />
+                  <span className="text text-default hidden sm:flex">
                     {blockTypeToBlockName[blockType as keyof BlockType]}
                   </span>
-                  <Icon.FiChevronDown className="ml-2 h-4 w-4 text-gray-700" />
+                  <ChevronDown className="text-default ml-2 h-4 w-4" />
                 </>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
+              <DropdownMenuContent align="start">
                 {Object.keys(blockTypeToBlockName).map((key) => {
                   return (
                     <DropdownMenuItem key={key} className="outline-none hover:ring-0 focus:ring-0">
@@ -419,11 +436,11 @@ export default function ToolbarPlugin(props: TextEditorProps) {
                         type="button"
                         onClick={() => format(key)}
                         className={classNames(
-                          "toolbar-item  w-full rounded-none focus:ring-0",
-                          blockType === key ? "w-full  bg-gray-100" : ""
+                          "w-full rounded-none focus:ring-0",
+                          blockType === key ? "bg-subtle w-full" : ""
                         )}>
                         <>
-                          <span className={"icon block-type " + key} />
+                          <span className={`icon block-type ${key}`} />
                           <span>{blockTypeToBlockName[key]}</span>
                         </>
                       </Button>
@@ -437,42 +454,39 @@ export default function ToolbarPlugin(props: TextEditorProps) {
 
         <>
           {!props.excludedToolbarItems?.includes("bold") && (
-            <button
+            <Button
+              color="minimal"
+              variant="icon"
               type="button"
+              StartIcon={Bold}
               onClick={() => {
                 editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold");
-                if (isItalic) {
-                  editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic");
-                }
               }}
-              className={"toolbar-item spaced rounded-md " + (isBold ? "active" : "")}
-              aria-label="Format Bold">
-              <i className="format bold" />
-            </button>
+              className={isBold ? "bg-subtle" : ""}
+            />
           )}
           {!props.excludedToolbarItems?.includes("italic") && (
-            <button
+            <Button
+              color="minimal"
+              variant="icon"
               type="button"
+              StartIcon={Italic}
               onClick={() => {
                 editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic");
-                if (isBold) {
-                  editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold");
-                }
               }}
-              className={"toolbar-item spaced rounded-md " + (isItalic ? "active" : "")}
-              aria-label="Format Italics">
-              <i className="format italic" />
-            </button>
+              className={isItalic ? "bg-subtle" : ""}
+            />
           )}
           {!props.excludedToolbarItems?.includes("link") && (
             <>
-              <button
+              <Button
+                color="minimal"
+                variant="icon"
                 type="button"
+                StartIcon={Link}
                 onClick={insertLink}
-                className={"toolbar-item spaced rounded-md " + (isLink ? "active" : "")}
-                aria-label="Insert Link">
-                <i className="format link" />
-              </button>
+                className={isLink ? "bg-subtle" : ""}
+              />
               {isLink && createPortal(<FloatingLinkEditor editor={editor} />, document.body)}{" "}
             </>
           )}

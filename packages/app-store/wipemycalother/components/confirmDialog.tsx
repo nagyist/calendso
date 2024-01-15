@@ -1,12 +1,13 @@
-import { ClockIcon } from "@heroicons/react/outline";
 import { useMutation } from "@tanstack/react-query";
-import { Dispatch, SetStateAction, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { useState } from "react";
 
 import dayjs from "@calcom/dayjs";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import logger from "@calcom/lib/logger";
 import { trpc } from "@calcom/trpc/react";
 import { Button, Dialog, DialogContent, DialogFooter, DialogHeader, showToast } from "@calcom/ui";
+import { Clock } from "@calcom/ui/components/icon";
 
 interface IConfirmDialogWipe {
   isOpenDialog: boolean;
@@ -26,7 +27,7 @@ const wipeMyCalAction = async (props: IWipeMyCalAction) => {
   };
   try {
     const endpoint = "/api/integrations/wipemycalother/wipe";
-    return fetch(`${process.env.NEXT_PUBLIC_WEBAPP_URL}` + endpoint, {
+    return fetch(`${process.env.NEXT_PUBLIC_WEBAPP_URL}${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -65,7 +66,7 @@ export const ConfirmDialog = (props: IConfirmDialogWipe) => {
         }
       } catch (error) {
         showToast(t("unexpected_error_try_again"), "error");
-        // @TODO: notify sentry
+        // @TODO: notify
       }
       setIsLoading(false);
     },
@@ -81,17 +82,17 @@ export const ConfirmDialog = (props: IConfirmDialogWipe) => {
       <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
         <div className="flex flex-row space-x-3">
           <div className="flex h-10 w-10 flex-shrink-0 justify-center rounded-full bg-[#FAFAFA]">
-            <ClockIcon className="m-auto h-6 w-6" />
+            <Clock className="m-auto h-5 w-5" />
           </div>
           <div className="pt-1">
             <DialogHeader title="Wipe My Calendar" />
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="text-subtle mt-2 text-sm">
               This will cancel all upcoming meetings from: <br />{" "}
-              <strong className="text-black">
+              <strong className="text-emphasis">
                 {initialDate.format(dateFormat)} - {endDate.format(dateFormat)}
               </strong>
             </p>
-            <p className="mt-6 mb-2 text-sm">Are you sure? This can&apos;t be undone</p>
+            <p className="mb-2 mt-6 text-sm">Are you sure? This can&apos;t be undone</p>
           </div>
         </div>
 

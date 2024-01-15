@@ -1,26 +1,27 @@
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
-import { StripeData } from "@calcom/app-store/stripepayment/lib/server";
-import { getEventTypeAppData, getLocationOptions } from "@calcom/app-store/utils";
-import { LocationObject } from "@calcom/core/location";
-import { parseBookingLimit, parseRecurringEvent } from "@calcom/lib";
-import getEnabledApps from "@calcom/lib/apps/getEnabledApps";
-import { CAL_URL } from "@calcom/lib/constants";
-import getStripeAppData from "@calcom/lib/getStripeAppData";
+import { getLocationGroupedOptions } from "@calcom/app-store/server";
+import { getEventTypeAppData } from "@calcom/app-store/utils";
+import type { LocationObject } from "@calcom/core/location";
+import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
+import { parseBookingLimit, parseDurationLimit, parseRecurringEvent } from "@calcom/lib";
+import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { getTranslation } from "@calcom/lib/server/i18n";
+import type { PrismaClient } from "@calcom/prisma";
+import { SchedulingType, MembershipRole } from "@calcom/prisma/enums";
 import { customInputSchema, EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 
 import { TRPCError } from "@trpc/server";
 
+import { CAL_URL } from "./constants";
+import { getBookerBaseUrl } from "./getBookerUrl/server";
+
 interface getEventTypeByIdProps {
   eventTypeId: number;
   userId: number;
-  prisma: PrismaClient<
-    Prisma.PrismaClientOptions,
-    never,
-    Prisma.RejectOnNotFound | Prisma.RejectPerOperation | undefined
-  >;
+  prisma: PrismaClient;
   isTrpcCall?: boolean;
+  isUserOrganizationAdmin: boolean;
 }
 
 export default async function getEventTypeById({
@@ -28,13 +29,14 @@ export default async function getEventTypeById({
   userId,
   prisma,
   isTrpcCall = false,
+  isUserOrganizationAdmin,
 }: getEventTypeByIdProps) {
   const userSelect = Prisma.validator<Prisma.UserSelect>()({
     name: true,
     username: true,
     id: true,
-    avatar: true,
     email: true,
+    organizationId: true,
     locale: true,
     defaultScheduleId: true,
   });
@@ -76,6 +78,8 @@ export default async function getEventTypeById({
       slug: true,
       description: true,
       length: true,
+      isInstantEvent: true,
+      offsetStart: true,
       hidden: true,
       locations: true,
       eventName: true,
@@ -87,7 +91,9 @@ export default async function getEventTypeById({
       periodStartDate: true,
       periodEndDate: true,
       periodCountCalendarDays: true,
+      lockTimeZoneToggleOnBookingPage: true,
       requiresConfirmation: true,
+      requiresBookerEmailVerification: true,
       recurringEvent: true,
       hideCalendarNotes: true,
       disableGuests: true,
@@ -97,20 +103,46 @@ export default async function getEventTypeById({
       slotInterval: true,
       hashedLink: true,
       bookingLimits: true,
+      onlyShowFirstAvailableSlot: true,
+      durationLimits: true,
       successRedirectUrl: true,
       currency: true,
+      bookingFields: true,
+      owner: {
+        select: {
+          organizationId: true,
+        },
+      },
+      parent: {
+        select: {
+          teamId: true,
+        },
+      },
+      teamId: true,
       team: {
         select: {
           id: true,
+          name: true,
           slug: true,
-          members: {
-            where: {
-              accepted: true,
+          parentId: true,
+          parent: {
+            select: {
+              slug: true,
             },
+          },
+          members: {
             select: {
               role: true,
+              accepted: true,
               user: {
-                select: userSelect,
+                select: {
+                  ...userSelect,
+                  eventTypes: {
+                    select: {
+                      slug: true,
+                    },
+                  },
+                },
               },
             },
           },
@@ -123,6 +155,7 @@ export default async function getEventTypeById({
       schedule: {
         select: {
           id: true,
+          name: true,
         },
       },
       hosts: {
@@ -133,9 +166,25 @@ export default async function getEventTypeById({
       },
       userId: true,
       price: true,
+      children: {
+        select: {
+          owner: {
+            select: {
+              name: true,
+              username: true,
+              email: true,
+              id: true,
+              organizationId: true,
+            },
+          },
+          hidden: true,
+          slug: true,
+        },
+      },
       destinationCalendar: true,
       seatsPerTimeSlot: true,
       seatsShowAttendees: true,
+      seatsShowAvailabilityCount: true,
       webhooks: {
         select: {
           id: true,
@@ -151,12 +200,26 @@ export default async function getEventTypeById({
         include: {
           workflow: {
             include: {
+              team: {
+                select: {
+                  id: true,
+                  slug: true,
+                  name: true,
+                  members: true,
+                },
+              },
               activeOn: {
                 select: {
                   eventType: {
                     select: {
                       id: true,
                       title: true,
+                      parentId: true,
+                      _count: {
+                        select: {
+                          children: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -173,47 +236,20 @@ export default async function getEventTypeById({
     if (isTrpcCall) {
       throw new TRPCError({ code: "NOT_FOUND" });
     } else {
-      throw new Error("Event type noy found");
+      throw new Error("Event type not found");
     }
   }
 
-  const credentials = await prisma.credential.findMany({
-    where: {
-      userId,
-      app: {
-        enabled: true,
-      },
-    },
-    select: {
-      id: true,
-      type: true,
-      key: true,
-      userId: true,
-      appId: true,
-      invalid: true,
-    },
-  });
-
   const { locations, metadata, ...restEventType } = rawEventType;
-  const newMetadata = EventTypeMetaDataSchema.parse(metadata || {})!;
-  const apps = newMetadata.apps || {};
+  const newMetadata = EventTypeMetaDataSchema.parse(metadata || {}) || {};
+  const apps = newMetadata?.apps || {};
   const eventTypeWithParsedMetadata = { ...rawEventType, metadata: newMetadata };
+
   newMetadata.apps = {
     ...apps,
-    stripe: {
-      ...getStripeAppData(eventTypeWithParsedMetadata, true),
-      currency:
-        (
-          credentials.find((integration) => integration.type === "stripe_payment")
-            ?.key as unknown as StripeData
-        )?.default_currency || "usd",
-    },
     giphy: getEventTypeAppData(eventTypeWithParsedMetadata, "giphy", true),
-    rainbow: getEventTypeAppData(eventTypeWithParsedMetadata, "rainbow", true),
   };
 
-  // TODO: How to extract metadata schema from _EventTypeModel to be able to parse it?
-  // const parsedMetaData = _EventTypeModel.parse(newMetadata);
   const parsedMetaData = newMetadata;
 
   const parsedCustomInputs = (rawEventType.customInputs || []).map((input) => customInputSchema.parse(input));
@@ -221,11 +257,37 @@ export default async function getEventTypeById({
   const eventType = {
     ...restEventType,
     schedule: rawEventType.schedule?.id || rawEventType.users[0]?.defaultScheduleId || null,
+    scheduleName: rawEventType.schedule?.name || null,
     recurringEvent: parseRecurringEvent(restEventType.recurringEvent),
     bookingLimits: parseBookingLimit(restEventType.bookingLimits),
+    durationLimits: parseDurationLimit(restEventType.durationLimits),
     locations: locations as unknown as LocationObject[],
     metadata: parsedMetaData,
     customInputs: parsedCustomInputs,
+    users: rawEventType.users,
+    bookerUrl: restEventType.team
+      ? await getBookerBaseUrl({ organizationId: restEventType.team.parentId })
+      : restEventType.owner
+      ? await getBookerBaseUrl(restEventType.owner)
+      : CAL_URL,
+    children: restEventType.children.flatMap((ch) =>
+      ch.owner !== null
+        ? {
+            ...ch,
+            owner: {
+              ...ch.owner,
+              avatar: getUserAvatarUrl(ch.owner),
+              email: ch.owner.email,
+              name: ch.owner.name ?? "",
+              username: ch.owner.username ?? "",
+              membership:
+                restEventType.team?.members.find((tm) => tm.user.id === ch.owner?.id)?.role ||
+                MembershipRole.MEMBER,
+            },
+            created: true,
+          }
+        : []
+    ),
   };
 
   // backwards compat
@@ -248,34 +310,88 @@ export default async function getEventTypeById({
     }
     eventType.users.push(fallbackUser);
   }
+
+  const eventTypeUsers: ((typeof eventType.users)[number] & { avatar: string })[] = eventType.users.map(
+    (user) => ({
+      ...user,
+      avatar: getUserAvatarUrl(user),
+    })
+  );
+
   const currentUser = eventType.users.find((u) => u.id === userId);
+
   const t = await getTranslation(currentUser?.locale ?? "en", "common");
-  const integrations = await getEnabledApps(credentials);
-  const locationOptions = getLocationOptions(integrations, t);
+
+  if (!currentUser?.id && !eventType.teamId) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Could not find user or team",
+    });
+  }
+
+  const locationOptions = await getLocationGroupedOptions(
+    eventType.teamId ? { teamId: eventType.teamId } : { userId },
+    t
+  );
+  if (eventType.schedulingType === SchedulingType.MANAGED) {
+    locationOptions.splice(0, 0, {
+      label: t("default"),
+      options: [
+        {
+          label: t("members_default_location"),
+          value: "",
+          icon: "/user-check.svg",
+        },
+      ],
+    });
+  }
 
   const eventTypeObject = Object.assign({}, eventType, {
+    users: eventTypeUsers,
     periodStartDate: eventType.periodStartDate?.toString() ?? null,
     periodEndDate: eventType.periodEndDate?.toString() ?? null,
+    bookingFields: getBookingFieldsWithSystemFields(eventType),
   });
 
+  const isOrgEventType = !!eventTypeObject.team?.parentId;
   const teamMembers = eventTypeObject.team
-    ? eventTypeObject.team.members.map((member) => {
-        const user = member.user;
-        user.avatar = `${CAL_URL}/${user.username}/avatar.png`;
-        return user;
-      })
+    ? eventTypeObject.team.members
+        .filter((member) => member.accepted || isOrgEventType)
+        .map((member) => {
+          const user: typeof member.user & { avatar: string } = {
+            ...member.user,
+            avatar: getUserAvatarUrl(member.user),
+          };
+          return {
+            ...user,
+            eventTypes: user.eventTypes.map((evTy) => evTy.slug),
+            membership: member.role,
+          };
+        })
     : [];
 
-  // Find the current users memebership so we can check role to enable/disable deletion.
+  // Find the current users membership so we can check role to enable/disable deletion.
   // Sets to null if no membership is found - this must mean we are in a none team event type
   const currentUserMembership = eventTypeObject.team?.members.find((el) => el.user.id === userId) ?? null;
+
+  let destinationCalendar = eventTypeObject.destinationCalendar;
+  if (!destinationCalendar) {
+    destinationCalendar = await prisma.destinationCalendar.findFirst({
+      where: {
+        userId: userId,
+        eventTypeId: null,
+      },
+    });
+  }
 
   const finalObj = {
     eventType: eventTypeObject,
     locationOptions,
+    destinationCalendar,
     team: eventTypeObject.team || null,
     teamMembers,
     currentUserMembership,
+    isUserOrganizationAdmin,
   };
   return finalObj;
 }

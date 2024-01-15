@@ -1,15 +1,9 @@
-import { GetServerSidePropsContext } from "next";
+import UserSSOView from "@calcom/features/ee/sso/page/user-sso-view";
 
-import { ssrInit } from "@server/lib/ssr";
+import type { CalPageWrapper } from "@components/PageWrapper";
+import PageWrapper from "@components/PageWrapper";
 
-export { default } from "@calcom/features/ee/sso/page/user-sso-view";
+const Page = UserSSOView as CalPageWrapper;
+Page.PageWrapper = PageWrapper;
 
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-
-  return {
-    props: {
-      trpcState: ssr.dehydrate(),
-    },
-  };
-};
+export default Page;

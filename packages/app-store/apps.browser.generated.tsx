@@ -5,40 +5,39 @@
 import dynamic from "next/dynamic";
 
 export const InstallAppButtonMap = {
-  applecalendar: dynamic(() => import("./applecalendar/components/InstallAppButton")),
-  around: dynamic(() => import("./around/components/InstallAppButton")),
-  caldavcalendar: dynamic(() => import("./caldavcalendar/components/InstallAppButton")),
-  closecom: dynamic(() => import("./closecom/components/InstallAppButton")),
   exchange2013calendar: dynamic(() => import("./exchange2013calendar/components/InstallAppButton")),
   exchange2016calendar: dynamic(() => import("./exchange2016calendar/components/InstallAppButton")),
-  exchangecalendar: dynamic(() => import("./exchangecalendar/components/InstallAppButton")),
-  googlecalendar: dynamic(() => import("./googlecalendar/components/InstallAppButton")),
-  googlevideo: dynamic(() => import("./googlevideo/components/InstallAppButton")),
-  hubspot: dynamic(() => import("./hubspot/components/InstallAppButton")),
-  huddle01video: dynamic(() => import("./huddle01video/components/InstallAppButton")),
-  jitsivideo: dynamic(() => import("./jitsivideo/components/InstallAppButton")),
-  larkcalendar: dynamic(() => import("./larkcalendar/components/InstallAppButton")),
-  office365calendar: dynamic(() => import("./office365calendar/components/InstallAppButton")),
   office365video: dynamic(() => import("./office365video/components/InstallAppButton")),
-  plausible: dynamic(() => import("./plausible/components/InstallAppButton")),
-  riverside: dynamic(() => import("./riverside/components/InstallAppButton")),
-  tandemvideo: dynamic(() => import("./tandemvideo/components/InstallAppButton")),
   vital: dynamic(() => import("./vital/components/InstallAppButton")),
-  whereby: dynamic(() => import("./whereby/components/InstallAppButton")),
-  wipemycalother: dynamic(() => import("./wipemycalother/components/InstallAppButton")),
-  zapier: dynamic(() => import("./zapier/components/InstallAppButton")),
-  zoomvideo: dynamic(() => import("./zoomvideo/components/InstallAppButton")),
 };
 export const AppSettingsComponentsMap = {
-  weather_in_your_calendar: dynamic(() => import("./weather_in_your_calendar/components/AppSettings")),
-  zapier: dynamic(() => import("./zapier/components/AppSettings")),
+  "cal-ai": dynamic(() => import("./cal-ai/components/AppSettingsInterface")),
+  "general-app-settings": dynamic(() =>
+    import("./templates/general-app-settings/components/AppSettingsInterface")
+  ),
+  weather_in_your_calendar: dynamic(() =>
+    import("./weather_in_your_calendar/components/AppSettingsInterface")
+  ),
+  zapier: dynamic(() => import("./zapier/components/AppSettingsInterface")),
 };
 export const EventTypeAddonMap = {
-  fathom: dynamic(() => import("./fathom/extensions/EventTypeAppCard")),
-  ga4: dynamic(() => import("./ga4/extensions/EventTypeAppCard")),
-  giphy: dynamic(() => import("./giphy/extensions/EventTypeAppCard")),
-  plausible: dynamic(() => import("./plausible/extensions/EventTypeAppCard")),
-  qr_code: dynamic(() => import("./qr_code/extensions/EventTypeAppCard")),
-  rainbow: dynamic(() => import("./rainbow/extensions/EventTypeAppCard")),
-  stripepayment: dynamic(() => import("./stripepayment/extensions/EventTypeAppCard")),
+  alby: dynamic(() => import("./alby/components/EventTypeAppCardInterface")),
+  basecamp3: dynamic(() => import("./basecamp3/components/EventTypeAppCardInterface")),
+  fathom: dynamic(() => import("./fathom/components/EventTypeAppCardInterface")),
+  ga4: dynamic(() => import("./ga4/components/EventTypeAppCardInterface")),
+  giphy: dynamic(() => import("./giphy/components/EventTypeAppCardInterface")),
+  gtm: dynamic(() => import("./gtm/components/EventTypeAppCardInterface")),
+  matomo: dynamic(() => import("./matomo/components/EventTypeAppCardInterface")),
+  metapixel: dynamic(() => import("./metapixel/components/EventTypeAppCardInterface")),
+  "mock-payment-app": dynamic(() => import("./mock-payment-app/components/EventTypeAppCardInterface")),
+  paypal: dynamic(() => import("./paypal/components/EventTypeAppCardInterface")),
+  plausible: dynamic(() => import("./plausible/components/EventTypeAppCardInterface")),
+  qr_code: dynamic(() => import("./qr_code/components/EventTypeAppCardInterface")),
+  stripepayment: dynamic(() => import("./stripepayment/components/EventTypeAppCardInterface")),
+  "booking-pages-tag": dynamic(() =>
+    import("./templates/booking-pages-tag/components/EventTypeAppCardInterface")
+  ),
+  "event-type-app-card": dynamic(() =>
+    import("./templates/event-type-app-card/components/EventTypeAppCardInterface")
+  ),
 };

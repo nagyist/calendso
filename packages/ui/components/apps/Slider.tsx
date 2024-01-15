@@ -1,17 +1,19 @@
-import Glide, { Options } from "@glidejs/glide";
+import type { Options } from "@glidejs/glide";
+import Glide from "@glidejs/glide";
 import "@glidejs/glide/dist/css/glide.core.min.css";
 import "@glidejs/glide/dist/css/glide.theme.min.css";
-import { ComponentProps, FC, useEffect, useRef } from "react";
+import type { ComponentProps, FC } from "react";
+import { useEffect, useRef } from "react";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 
-import { Icon } from "../../components/icon";
+import { ArrowLeft, ArrowRight } from "../icon";
 import { SkeletonText } from "../skeleton";
 
 const SliderButton: FC<ComponentProps<"button">> = (props) => {
   const { children, ...rest } = props;
   return (
-    <button className="rounded p-2.5 text-gray-700 hover:bg-gray-100" {...rest}>
+    <button className="hover:bg-subtle text-default rounded p-2.5 transition" {...rest}>
       {children}
     </button>
   );
@@ -48,19 +50,12 @@ export const Slider = <T extends string | unknown>({
 
   return (
     <div className={`mb-2 ${className}`}>
-      <style jsx global>
-        {`
-          .glide__slide {
-            height: auto !important;
-          }
-        `}
-      </style>
       <div className="glide" ref={glide}>
-        <div className="flex cursor-default pb-3">
+        <div className="flex cursor-default items-center pb-3">
           {isLocaleReady ? (
             title && (
               <div>
-                <h2 className="mt-0 mb-2 text-base font-semibold leading-none text-gray-900">{title}</h2>
+                <h2 className="text-emphasis mt-0 text-base font-semibold leading-none">{title}</h2>
               </div>
             )
           ) : (
@@ -68,10 +63,10 @@ export const Slider = <T extends string | unknown>({
           )}
           <div className="glide__arrows ml-auto flex items-center gap-x-1" data-glide-el="controls">
             <SliderButton data-glide-dir="<">
-              <Icon.FiArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-5 w-5" />
             </SliderButton>
             <SliderButton data-glide-dir=">">
-              <Icon.FiArrowRight className="h-5 w-5" />
+              <ArrowRight className="h-5 w-5" />
             </SliderButton>
           </div>
         </div>

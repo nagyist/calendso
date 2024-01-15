@@ -2,8 +2,10 @@ import Link from "next/link";
 
 import { classNames } from "@calcom/lib";
 
-import { Icon, Badge, BadgeProps } from "../..";
+import type { BadgeProps } from "../..";
+import { Badge } from "../..";
 import { Divider } from "../divider";
+import { ArrowDown, ArrowUp, Trash2 } from "../icon";
 
 type Action = { check: () => boolean; fn: () => void };
 export default function FormCard({
@@ -26,7 +28,7 @@ export default function FormCard({
 } & JSX.IntrinsicElements["div"]) {
   className = classNames(
     className,
-    "flex items-center group relative w-full rounded-md p-4 border border-gray-200"
+    "flex items-center group relative w-full rounded-md p-4 border border-subtle"
   );
 
   return (
@@ -35,24 +37,24 @@ export default function FormCard({
         {moveUp?.check() ? (
           <button
             type="button"
-            className="invisible absolute left-0 -ml-[13px] -mt-10 flex h-6 w-6 scale-0 items-center justify-center rounded-md border   bg-white p-1 text-gray-400 transition-all hover:border-transparent hover:text-black  hover:shadow group-hover:visible group-hover:scale-100 "
+            className="bg-default text-muted hover:text-emphasis invisible absolute left-0 -ml-[13px] -mt-10 flex h-6 w-6 scale-0 items-center   justify-center rounded-md border p-1 transition-all hover:border-transparent  hover:shadow group-hover:visible group-hover:scale-100 "
             onClick={() => moveUp?.fn()}>
-            <Icon.FiArrowUp />
+            <ArrowUp />
           </button>
         ) : null}
         {moveDown?.check() ? (
           <button
             type="button"
-            className="invisible absolute left-0 -ml-[13px] -mt-2 flex h-6 w-6  scale-0 items-center justify-center rounded-md border bg-white p-1 text-gray-400 transition-all hover:border-transparent hover:text-black hover:shadow group-hover:visible group-hover:scale-100"
+            className="bg-default text-muted hover:text-emphasis invisible absolute left-0 -ml-[13px] -mt-2  flex h-6 w-6 scale-0 items-center justify-center rounded-md border p-1 transition-all hover:border-transparent hover:shadow group-hover:visible group-hover:scale-100"
             onClick={() => moveDown?.fn()}>
-            <Icon.FiArrowDown />
+            <ArrowDown />
           </button>
         ) : null}
       </div>
       <div className="w-full">
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-sm font-semibold leading-none">{label}</span>
+            <span className="text-emphasis text-sm font-semibold">{label}</span>
             {badge && (
               <Badge className="ml-2" variant={badge.variant}>
                 {badge.href ? <Link href={badge.href}>{badge.text}</Link> : badge.text}
@@ -66,11 +68,11 @@ export default function FormCard({
                 deleteField?.fn();
               }}
               color="secondary">
-              <Icon.FiTrash className="h-4 w-4 text-gray-400" />
+              <Trash2 className="text-default h-4 w-4" />
             </button>
           ) : null}
         </div>
-        <Divider className="mt-3 mb-6" />
+        <Divider className="mb-6 mt-3" />
         {children}
       </div>
     </div>

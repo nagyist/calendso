@@ -2,25 +2,35 @@ import * as Popover from "@radix-ui/react-popover";
 import React from "react";
 
 import { classNames } from "@calcom/lib";
-import { Icon } from "@calcom/ui";
+import { Tooltip } from "@calcom/ui";
+
+import { ChevronDown } from "../icon";
 
 export const AnimatedPopover = ({
   text,
   count,
+  popoverTriggerClassNames,
   children,
+  Trigger,
+  defaultOpen,
+  prefix,
 }: {
   text: string;
   count?: number;
   children: React.ReactNode;
+  popoverTriggerClassNames?: string;
+  Trigger?: React.ReactNode;
+  defaultOpen?: boolean;
+  prefix?: string;
 }) => {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLDivElement>(null);
+  const [open, setOpen] = React.useState(defaultOpen ?? false);
+  const ref = React.useRef<HTMLButtonElement>(null);
   // calculate which aligment to open the popover with based on which half of the screen it is on (left or right)
   const [align, setAlign] = React.useState<"start" | "end">("start");
   React.useEffect(() => {
     const handleResize = () => {
       const halfWidth = window.innerWidth / 2;
-      const { x, y } = ref?.current?.getBoundingClientRect() || {
+      const { x } = ref?.current?.getBoundingClientRect() || {
         x: 0,
         y: 0,
       };
@@ -38,30 +48,41 @@ export const AnimatedPopover = ({
   }, [setAlign]);
 
   return (
-    <Popover.Root onOpenChange={setOpen} modal={true}>
+    <Popover.Root defaultOpen={defaultOpen} onOpenChange={setOpen} modal={true}>
       <Popover.Trigger asChild>
-        <div
+        <button
           ref={ref}
-          className="item-center  mb-2 flex h-9 justify-between whitespace-nowrap rounded-md border border-gray-300 py-2 px-3
-          text-sm placeholder:text-gray-400 hover:cursor-pointer hover:border-gray-400
-          focus:border-neutral-300 focus:outline-none focus:ring-2 focus:ring-neutral-800 focus:ring-offset-1">
-          <div className="max-w-36 flex items-center">
-            <div className="truncate">
-              {text}
-              {count && count > 0 && (
-                <div className="flex h-4 w-4 items-center justify-center rounded-full">{count}</div>
-              )}
+          className={classNames(
+            "hover:border-emphasis border-default text-default hover:text-emphasis radix-state-open:border-emphasis radix-state-open:outline-none radix-state-open:ring-2 radix-state-open:ring-emphasis mb-4 flex h-9 max-h-72 items-center justify-between whitespace-nowrap rounded-md border px-3 py-2 text-sm hover:cursor-pointer",
+            popoverTriggerClassNames
+          )}>
+          {Trigger ? (
+            Trigger
+          ) : (
+            <div className="max-w-36 flex items-center">
+              <Tooltip content={`${prefix}${text}`}>
+                <div className="flex select-none truncate font-medium">
+                  {prefix && <span className="text-subtle">{prefix}&nbsp;</span>}
+                  {text}
+                  {count && count > 0 && (
+                    <div className="text-emphasis flex items-center justify-center rounded-full font-semibold">
+                      <span>&nbsp;</span>
+                      {count}
+                    </div>
+                  )}
+                </div>
+              </Tooltip>
+              <ChevronDown
+                className={classNames("ml-2 w-4 transition-transform duration-150", open && "rotate-180")}
+              />
             </div>
-            <Icon.FiChevronDown
-              className={classNames("mt-auto ml-2 transition-transform duration-150", open && "rotate-180")}
-            />
-          </div>
-        </div>
+          )}
+        </button>
       </Popover.Trigger>
       <Popover.Content side="bottom" align={align} asChild>
         <div
           className={classNames(
-            "absolute z-50 mt-2 w-56  rounded-md bg-white  shadow-sm ring-1 ring-black ring-opacity-5 focus-within:outline-none",
+            "bg-default border-subtle scroll-bar absolute z-50 mt-1 max-h-64 w-56 select-none overflow-y-auto rounded-md border py-[2px] shadow-md focus-within:outline-none",
             align === "end" && "-translate-x-[228px]"
           )}>
           {children}

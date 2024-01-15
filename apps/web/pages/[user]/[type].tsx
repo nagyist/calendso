@@ -1,297 +1,271 @@
-import MarkdownIt from "markdown-it";
-import { GetStaticPaths, GetStaticPropsContext } from "next";
-import { JSONObject } from "superjson/dist/types";
+import type { GetServerSidePropsContext } from "next";
+import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 
-import { privacyFilteredLocations, LocationObject } from "@calcom/app-store/locations";
-import { IS_TEAM_BILLING_ENABLED, WEBAPP_URL } from "@calcom/lib/constants";
-import { getDefaultEvent, getGroupName, getUsernameList } from "@calcom/lib/defaultEvents";
-import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
+import { Booker } from "@calcom/atoms";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { handleTypeRedirection } from "@calcom/features/booking-redirect/handle-type";
+import { getBookerWrapperClasses } from "@calcom/features/bookings/Booker/utils/getBookerWrapperClasses";
+import { BookerSeo } from "@calcom/features/bookings/components/BookerSeo";
+import { getBookingForReschedule, getBookingForSeatedEvent } from "@calcom/features/bookings/lib/get-booking";
+import type { GetBookingType } from "@calcom/features/bookings/lib/get-booking";
+import { orgDomainConfig, userOrgQuery } from "@calcom/features/ee/organizations/lib/orgDomains";
+import { getUsernameList } from "@calcom/lib/defaultEvents";
+import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
-import { User } from "@calcom/prisma/client";
-import { EventTypeMetaDataSchema, teamMetadataSchema } from "@calcom/prisma/zod-utils";
+import { RedirectType } from "@calcom/prisma/client";
 
-import { isBrandingHidden } from "@lib/isBrandingHidden";
-import { inferSSRProps } from "@lib/types/inferSSRProps";
-import { EmbedProps } from "@lib/withEmbedSsr";
+import type { inferSSRProps } from "@lib/types/inferSSRProps";
+import type { EmbedProps } from "@lib/withEmbedSsr";
 
-import AvailabilityPage from "@components/booking/pages/AvailabilityPage";
+import PageWrapper from "@components/PageWrapper";
 
-export type AvailabilityPageProps = inferSSRProps<typeof getStaticProps> & EmbedProps;
+import { getTemporaryOrgRedirect } from "../../lib/getTemporaryOrgRedirect";
 
-export default function Type(props: AvailabilityPageProps) {
-  const { t } = useLocale();
+export type PageProps = inferSSRProps<typeof getServerSideProps> & EmbedProps;
 
-  return props.away ? (
-    <div className="h-screen dark:bg-neutral-900">
-      <main className="mx-auto max-w-3xl px-4 py-24">
-        <div className="space-y-6" data-testid="event-types">
-          <div className="overflow-hidden rounded-sm border dark:border-gray-900">
-            <div className="p-8 text-center text-gray-400 dark:text-white">
-              <h2 className="font-cal mb-2 text-3xl text-gray-600 dark:text-white">
-                😴{" " + t("user_away")}
-              </h2>
-              <p className="mx-auto max-w-md">{t("user_away_description")}</p>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  ) : props.isDynamic && !props.profile.allowDynamicBooking ? (
-    <div className="dark:bg-darkgray-50 h-screen">
-      <main className="mx-auto max-w-3xl px-4 py-24">
-        <div className="space-y-6" data-testid="event-types">
-          <div className="overflow-hidden rounded-sm border dark:border-gray-900">
-            <div className="p-8 text-center text-gray-400 dark:text-white">
-              <h2 className="font-cal mb-2 text-3xl text-gray-600 dark:text-white">
-                {" " + t("unavailable")}
-              </h2>
-              <p className="mx-auto max-w-md">{t("user_dynamic_booking_disabled")}</p>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  ) : (
-    <AvailabilityPage {...props} />
+export const getMultipleDurationValue = (
+  multipleDurationConfig: number[] | undefined,
+  queryDuration: string | string[] | null | undefined,
+  defaultValue: number
+) => {
+  if (!multipleDurationConfig) return null;
+  if (multipleDurationConfig.includes(Number(queryDuration))) return Number(queryDuration);
+  return defaultValue;
+};
+
+export default function Type({
+  slug,
+  user,
+  isEmbed,
+  booking,
+  away,
+  isBrandingHidden,
+  isSEOIndexable,
+  rescheduleUid,
+  eventData,
+}: PageProps) {
+  const searchParams = useSearchParams();
+
+  return (
+    <main className={getBookerWrapperClasses({ isEmbed: !!isEmbed })}>
+      <BookerSeo
+        username={user}
+        eventSlug={slug}
+        rescheduleUid={rescheduleUid ?? undefined}
+        hideBranding={isBrandingHidden}
+        isSEOIndexable={isSEOIndexable ?? true}
+        entity={eventData.entity}
+        bookingData={booking}
+      />
+      <Booker
+        username={user}
+        eventSlug={slug}
+        bookingData={booking}
+        isAway={away}
+        hideBranding={isBrandingHidden}
+        entity={eventData.entity}
+        durationConfig={eventData.metadata?.multipleDuration}
+        /* TODO: Currently unused, evaluate it is needed-
+         *       Possible alternative approach is to have onDurationChange.
+         */
+        duration={getMultipleDurationValue(
+          eventData.metadata?.multipleDuration,
+          searchParams?.get("duration"),
+          eventData.length
+        )}
+      />
+    </main>
   );
 }
 
-Type.isThemeSupported = true;
+Type.isBookingPage = true;
+Type.PageWrapper = PageWrapper;
 
-async function getUserPageProps(context: GetStaticPropsContext) {
-  const { type: slug, user: username } = paramsSchema.parse(context.params);
-  const { ssgInit } = await import("@server/lib/ssg");
-  const ssg = await ssgInit(context);
-  const user = await prisma.user.findUnique({
-    where: {
-      username,
-    },
-    select: {
-      id: true,
-      username: true,
-      away: true,
-      name: true,
-      hideBranding: true,
-      timeZone: true,
-      theme: true,
-      weekStart: true,
-      brandColor: true,
-      darkBrandColor: true,
-      eventTypes: {
-        where: {
-          // Many-to-many relationship causes inclusion of the team events - cool -
-          // but to prevent these from being selected, make sure the teamId is NULL.
-          AND: [{ slug }, { teamId: null }],
-        },
-        select: {
-          title: true,
-          slug: true,
-          hidden: true,
-          recurringEvent: true,
-          length: true,
-          locations: true,
-          id: true,
-          description: true,
-          price: true,
-          currency: true,
-          requiresConfirmation: true,
-          schedulingType: true,
-          metadata: true,
-          seatsPerTimeSlot: true,
-        },
-        orderBy: [
-          {
-            position: "desc",
-          },
-          {
-            id: "asc",
-          },
-        ],
-      },
-      teams: {
-        include: {
-          team: true,
-        },
-      },
-    },
-  });
+async function getDynamicGroupPageProps(context: GetServerSidePropsContext) {
+  const session = await getServerSession(context);
+  const { user: usernames, type: slug } = paramsSchema.parse(context.params);
+  const { rescheduleUid, bookingUid } = context.query;
 
-  const md = new MarkdownIt("zero").enable([
-    //
-    "emphasis",
-    "list",
-    "newline",
-    "strikethrough",
-  ]);
-
-  if (!user || !user.eventTypes.length) return { notFound: true };
-
-  const [eventType]: (typeof user.eventTypes[number] & {
-    users: Pick<User, "name" | "username" | "hideBranding" | "timeZone">[];
-  })[] = [
-    {
-      ...user.eventTypes[0],
-      users: [
-        {
-          name: user.name,
-          username: user.username,
-          hideBranding: user.hideBranding,
-          timeZone: user.timeZone,
-        },
-      ],
-    },
-  ];
-
-  if (!eventType) return { notFound: true };
-
-  //TODO: Use zodSchema to verify it instead of using Type Assertion
-  const locations = eventType.locations ? (eventType.locations as LocationObject[]) : [];
-  const eventTypeObject = Object.assign({}, eventType, {
-    metadata: EventTypeMetaDataSchema.parse(eventType.metadata || {}),
-    recurringEvent: parseRecurringEvent(eventType.recurringEvent),
-    locations: privacyFilteredLocations(locations),
-    descriptionAsSafeHTML: eventType.description ? md.render(eventType.description) : null,
-  });
-  // Check if the user you are logging into has any active teams
-  const hasActiveTeam =
-    user.teams.filter((m) => {
-      if (!IS_TEAM_BILLING_ENABLED) return true;
-      const metadata = teamMetadataSchema.safeParse(m.team.metadata);
-      if (metadata.success && metadata.data?.subscriptionId) return true;
-      return false;
-    }).length > 0;
-
-  return {
-    props: {
-      eventType: eventTypeObject,
-      profile: {
-        ...eventType.users[0],
-        theme: user.theme,
-        allowDynamicBooking: false,
-        weekStart: user.weekStart,
-        brandColor: user.brandColor,
-        darkBrandColor: user.darkBrandColor,
-        slug: `${user.username}/${eventType.slug}`,
-        image: `${WEBAPP_URL}/${user.username}/avatar.png`,
-      },
-      away: user?.away,
-      isDynamic: false,
-      trpcState: ssg.dehydrate(),
-      isBrandingHidden: isBrandingHidden(user.hideBranding, hasActiveTeam),
-    },
-    revalidate: 10, // seconds
-  };
-}
-
-async function getDynamicGroupPageProps(context: GetStaticPropsContext) {
-  const { ssgInit } = await import("@server/lib/ssg");
-  const ssg = await ssgInit(context);
-  const { type: typeParam, user: userParam } = paramsSchema.parse(context.params);
-  const usernameList = getUsernameList(userParam);
-  const length = parseInt(typeParam);
-  const eventType = getDefaultEvent("" + length);
+  const { ssrInit } = await import("@server/lib/ssr");
+  const ssr = await ssrInit(context);
+  const { currentOrgDomain, isValidOrgDomain } = orgDomainConfig(context.req, context.params?.orgSlug);
 
   const users = await prisma.user.findMany({
     where: {
       username: {
-        in: usernameList,
+        in: usernames,
       },
+      organization: isValidOrgDomain
+        ? {
+            slug: currentOrgDomain,
+          }
+        : null,
     },
     select: {
-      id: true,
-      username: true,
-      name: true,
-      email: true,
-      bio: true,
-      avatar: true,
-      startTime: true,
-      endTime: true,
-      timeZone: true,
-      weekStart: true,
-      availability: true,
-      hideBranding: true,
-      brandColor: true,
-      darkBrandColor: true,
-      defaultScheduleId: true,
       allowDynamicBooking: true,
-      away: true,
-      schedules: {
-        select: {
-          availability: true,
-          timeZone: true,
-          id: true,
-        },
-      },
-      theme: true,
     },
   });
 
   if (!users.length) {
     return {
       notFound: true,
-    };
+    } as const;
+  }
+  const org = isValidOrgDomain ? currentOrgDomain : null;
+
+  let booking: GetBookingType | null = null;
+  if (rescheduleUid) {
+    booking = await getBookingForReschedule(`${rescheduleUid}`, session?.user?.id);
+  } else if (bookingUid) {
+    booking = await getBookingForSeatedEvent(`${bookingUid}`);
   }
 
-  const locations = eventType.locations ? (eventType.locations as LocationObject[]) : [];
-  const eventTypeObject = Object.assign({}, eventType, {
-    metadata: EventTypeMetaDataSchema.parse(eventType.metadata || {}),
-    recurringEvent: parseRecurringEvent(eventType.recurringEvent),
-    locations: privacyFilteredLocations(locations),
-    users: users.map((user) => {
-      return {
-        name: user.name,
-        username: user.username,
-        hideBranding: user.hideBranding,
-        timeZone: user.timeZone,
-      };
-    }),
+  // We use this to both prefetch the query on the server,
+  // as well as to check if the event exist, so we c an show a 404 otherwise.
+  const eventData = await ssr.viewer.public.event.fetch({
+    username: usernames.join("+"),
+    eventSlug: slug,
+    org,
   });
 
-  const dynamicNames = users.map((user) => {
-    return user.name || "";
-  });
-
-  const profile = {
-    name: getGroupName(dynamicNames),
-    image: null,
-    slug: "" + length,
-    theme: null as string | null,
-    weekStart: "Sunday",
-    brandColor: "",
-    darkBrandColor: "",
-    allowDynamicBooking: !users.some((user) => {
-      return !user.allowDynamicBooking;
-    }),
-  };
+  if (!eventData) {
+    return {
+      notFound: true,
+    } as const;
+  }
 
   return {
     props: {
-      eventType: eventTypeObject,
-      profile,
-      isDynamic: true,
+      eventData: {
+        entity: eventData.entity,
+        length: eventData.length,
+        metadata: {
+          ...eventData.metadata,
+          multipleDuration: [15, 30, 60],
+        },
+      },
+      booking,
+      user: usernames.join("+"),
+      slug,
       away: false,
-      trpcState: ssg.dehydrate(),
-      isBrandingHidden: false, // I think we should always show branding for dynamic groups - saves us checking every single user
+      trpcState: ssr.dehydrate(),
+      isBrandingHidden: false,
+      isSEOIndexable: true,
+      themeBasis: null,
+      bookingUid: bookingUid ? `${bookingUid}` : null,
+      rescheduleUid: rescheduleUid ? `${rescheduleUid}` : null,
     },
-    revalidate: 10, // seconds
   };
 }
 
-const paramsSchema = z.object({ type: z.string(), user: z.string() });
+async function getUserPageProps(context: GetServerSidePropsContext) {
+  const session = await getServerSession(context);
+  const { user: usernames, type: slug } = paramsSchema.parse(context.params);
+  const username = usernames[0];
+  const { rescheduleUid, bookingUid } = context.query;
+  const { currentOrgDomain, isValidOrgDomain } = orgDomainConfig(context.req, context.params?.orgSlug);
+  let outOfOffice = false;
+  const isOrgContext = currentOrgDomain && isValidOrgDomain;
 
-export const getStaticProps = async (context: GetStaticPropsContext) => {
-  const { user: userParam } = paramsSchema.parse(context.params);
-  // dynamic groups are not generated at build time, but otherwise are probably cached until infinity.
-  const isDynamicGroup = userParam.includes("+");
-  if (isDynamicGroup) {
-    return await getDynamicGroupPageProps(context);
-  } else {
-    return await getUserPageProps(context);
+  if (!isOrgContext) {
+    const redirect = await getTemporaryOrgRedirect({
+      slug: usernames[0],
+      redirectType: RedirectType.User,
+      eventTypeSlug: slug,
+      currentQuery: context.query,
+    });
+
+    if (redirect) {
+      return redirect;
+    }
   }
-};
 
-export const getStaticPaths: GetStaticPaths = async () => {
-  return { paths: [], fallback: "blocking" };
+  const { ssrInit } = await import("@server/lib/ssr");
+  const ssr = await ssrInit(context);
+  const user = await prisma.user.findFirst({
+    where: {
+      username,
+      organization: userOrgQuery(context.req, context.params?.orgSlug),
+    },
+    select: {
+      id: true,
+      hideBranding: true,
+      allowSEOIndexing: true,
+    },
+  });
+
+  if (!user) {
+    return {
+      notFound: true,
+    } as const;
+  }
+  // If user is found, quickly verify bookingRedirects
+  const result = await handleTypeRedirection({
+    userId: user.id,
+    username,
+    slug,
+  });
+  if (result && result.outOfOffice) {
+    outOfOffice = true;
+  }
+  if (result && result.redirect?.destination) {
+    return result;
+  }
+
+  let booking: GetBookingType | null = null;
+  if (rescheduleUid) {
+    booking = await getBookingForReschedule(`${rescheduleUid}`, session?.user?.id);
+  } else if (bookingUid) {
+    booking = await getBookingForSeatedEvent(`${bookingUid}`);
+  }
+
+  const org = isValidOrgDomain ? currentOrgDomain : null;
+  // We use this to both prefetch the query on the server,
+  // as well as to check if the event exist, so we can show a 404 otherwise.
+  const eventData = await ssr.viewer.public.event.fetch({
+    username,
+    eventSlug: slug,
+    org,
+  });
+
+  if (!eventData) {
+    return {
+      notFound: true,
+    } as const;
+  }
+
+  return {
+    props: {
+      booking,
+      eventData: {
+        entity: eventData.entity,
+        length: eventData.length,
+        metadata: eventData.metadata,
+      },
+      away: outOfOffice,
+      user: username,
+      slug,
+      trpcState: ssr.dehydrate(),
+      isBrandingHidden: user?.hideBranding,
+      isSEOIndexable: user?.allowSEOIndexing,
+      themeBasis: username,
+      bookingUid: bookingUid ? `${bookingUid}` : null,
+      rescheduleUid: rescheduleUid ? `${rescheduleUid}` : null,
+    },
+  };
+}
+
+const paramsSchema = z.object({
+  type: z.string().transform((s) => slugify(s)),
+  user: z.string().transform((s) => getUsernameList(s)),
+});
+
+// Booker page fetches a tiny bit of data server side, to determine early
+// whether the page should show an away state or dynamic booking not allowed.
+export const getServerSideProps = async (context: GetServerSidePropsContext) => {
+  const { user } = paramsSchema.parse(context.params);
+  const isDynamicGroup = user.length > 1;
+
+  return isDynamicGroup ? await getDynamicGroupPageProps(context) : await getUserPageProps(context);
 };

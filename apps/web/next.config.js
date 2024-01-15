@@ -1,38 +1,43 @@
 require("dotenv").config({ path: "../../.env" });
 const CopyWebpackPlugin = require("copy-webpack-plugin");
-const { withSentryConfig } = require("@sentry/nextjs");
 const os = require("os");
-const withTM = require("next-transpile-modules")([
-  "@calcom/app-store",
-  "@calcom/core",
-  "@calcom/dayjs",
-  "@calcom/emails",
-  "@calcom/embed-core",
-  "@calcom/embed-react",
-  "@calcom/embed-snippet",
-  "@calcom/features",
-  "@calcom/lib",
-  "@calcom/prisma",
-  "@calcom/trpc",
-  "@calcom/ui",
-]);
-
+const englishTranslation = require("./public/static/locales/en/common.json");
 const { withAxiom } = require("next-axiom");
+const { withSentryConfig } = require("@sentry/nextjs");
+const { version } = require("./package.json");
 const { i18n } = require("./next-i18next.config");
+const {
+  orgHostPath,
+  orgUserRoutePath,
+  orgUserTypeRoutePath,
+  orgUserTypeEmbedRoutePath,
+} = require("./pagesAndRewritePaths");
 
 if (!process.env.NEXTAUTH_SECRET) throw new Error("Please set NEXTAUTH_SECRET");
 if (!process.env.CALENDSO_ENCRYPTION_KEY) throw new Error("Please set CALENDSO_ENCRYPTION_KEY");
+const isOrganizationsEnabled =
+  process.env.ORGANIZATIONS_ENABLED === "1" || process.env.ORGANIZATIONS_ENABLED === "true";
+// To be able to use the version in the app without having to import package.json
+process.env.NEXT_PUBLIC_CALCOM_VERSION = version;
 
 // So we can test deploy previews preview
 if (process.env.VERCEL_URL && !process.env.NEXT_PUBLIC_WEBAPP_URL) {
-  process.env.NEXT_PUBLIC_WEBAPP_URL = "https://" + process.env.VERCEL_URL;
+  process.env.NEXT_PUBLIC_WEBAPP_URL = `https://${process.env.VERCEL_URL}`;
 }
 // Check for configuration of NEXTAUTH_URL before overriding
 if (!process.env.NEXTAUTH_URL && process.env.NEXT_PUBLIC_WEBAPP_URL) {
-  process.env.NEXTAUTH_URL = process.env.NEXT_PUBLIC_WEBAPP_URL + "/api/auth";
+  process.env.NEXTAUTH_URL = `${process.env.NEXT_PUBLIC_WEBAPP_URL}/api/auth`;
 }
 if (!process.env.NEXT_PUBLIC_WEBSITE_URL) {
   process.env.NEXT_PUBLIC_WEBSITE_URL = process.env.NEXT_PUBLIC_WEBAPP_URL;
+}
+if (
+  process.env.CSP_POLICY === "strict" &&
+  (process.env.CALCOM_ENV === "production" || process.env.NODE_ENV === "production")
+) {
+  throw new Error(
+    "Strict CSP policy(for style-src) is not yet supported in production. You can experiment with it in Dev Mode"
+  );
 }
 
 if (!process.env.EMAIL_FROM) {
@@ -65,6 +70,27 @@ if (process.env.GOOGLE_API_CREDENTIALS && !validJson(process.env.GOOGLE_API_CRED
   );
 }
 
+const informAboutDuplicateTranslations = () => {
+  const valueMap = {};
+
+  for (const key in englishTranslation) {
+    const value = englishTranslation[key];
+
+    if (valueMap[value]) {
+      console.warn(
+        "\x1b[33mDuplicate value found in common.json keys:",
+        "\x1b[0m ",
+        key,
+        "and",
+        valueMap[value]
+      );
+    } else {
+      valueMap[value] = key;
+    }
+  }
+};
+
+informAboutDuplicateTranslations();
 const plugins = [];
 if (process.env.ANALYZE === "true") {
   // only load dependency if env `ANALYZE` was set
@@ -74,13 +100,68 @@ if (process.env.ANALYZE === "true") {
   plugins.push(withBundleAnalyzer);
 }
 
-plugins.push(withTM);
 plugins.push(withAxiom);
+
+const matcherConfigRootPath = {
+  has: [
+    {
+      type: "host",
+      value: orgHostPath,
+    },
+  ],
+  source: "/",
+};
+
+const matcherConfigRootPathEmbed = {
+  has: [
+    {
+      type: "host",
+      value: orgHostPath,
+    },
+  ],
+  source: "/embed",
+};
+
+const matcherConfigUserRoute = {
+  has: [
+    {
+      type: "host",
+      value: orgHostPath,
+    },
+  ],
+  source: orgUserRoutePath,
+};
+
+const matcherConfigUserTypeRoute = {
+  has: [
+    {
+      type: "host",
+      value: orgHostPath,
+    },
+  ],
+  source: orgUserTypeRoutePath,
+};
+
+const matcherConfigUserTypeEmbedRoute = {
+  has: [
+    {
+      type: "host",
+      value: orgHostPath,
+    },
+  ],
+  source: orgUserTypeEmbedRoutePath,
+};
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  i18n,
-  productionBrowserSourceMaps: true,
+  experimental: {
+    serverComponentsExternalPackages: ["next-i18next"],
+  },
+  i18n: {
+    ...i18n,
+    localeDetection: false,
+  },
+  productionBrowserSourceMaps: false,
   /* We already do type check on GH actions */
   typescript: {
     ignoreBuildErrors: !!process.env.CI,
@@ -89,16 +170,43 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: !!process.env.CI,
   },
-  // TODO: We need to have all components in `@calcom/ui/components` in order to use this
-  // modularizeImports: {
-  //   "@calcom/ui": {
-  //     transform: "@calcom/ui/components/{{member}}",
-  //   },
-  // },
+  transpilePackages: [
+    "@calcom/app-store",
+    "@calcom/core",
+    "@calcom/dayjs",
+    "@calcom/emails",
+    "@calcom/embed-core",
+    "@calcom/embed-react",
+    "@calcom/embed-snippet",
+    "@calcom/features",
+    "@calcom/lib",
+    "@calcom/prisma",
+    "@calcom/trpc",
+    "@calcom/ui",
+    "lucide-react",
+  ],
+  modularizeImports: {
+    "@calcom/ui/components/icon": {
+      transform: "lucide-react/dist/esm/icons/{{ kebabCase member }}",
+      preventFullImport: true,
+    },
+    "@calcom/features/insights/components": {
+      transform: "@calcom/features/insights/components/{{member}}",
+      skipDefaultConversion: true,
+      preventFullImport: true,
+    },
+    lodash: {
+      transform: "lodash/{{member}}",
+    },
+    // TODO: We need to have all components in `@calcom/ui/components` in order to use this
+    // "@calcom/ui": {
+    //   transform: "@calcom/ui/components/{{member}}",
+    // },
+  },
   images: {
     unoptimized: true,
   },
-  webpack: (config) => {
+  webpack: (config, { webpack, buildId }) => {
     config.plugins.push(
       new CopyWebpackPlugin({
         patterns: [
@@ -120,10 +228,15 @@ const nextConfig = {
       })
     );
 
+    config.plugins.push(new webpack.DefinePlugin({ "process.env.BUILD_ID": JSON.stringify(buildId) }));
+
     config.resolve.fallback = {
       ...config.resolve.fallback, // if you miss it, all the other options in fallback, specified
       // by next.js will be dropped. Doesn't make much sense, but how it is
       fs: false,
+      // ignore module resolve errors caused by the server component bundler
+      "pg-native": false,
+      "superagent-proxy": false,
     };
 
     /**
@@ -138,42 +251,175 @@ const nextConfig = {
     return config;
   },
   async rewrites() {
-    return [
+    const beforeFiles = [
       {
-        source: "/:user/avatar.png",
-        destination: "/api/user/avatar?username=:user",
+        /**
+         * Needed due to the introduction of dotted usernames
+         * @see https://github.com/calcom/cal.com/pull/11706
+         */
+        source: "/embed.js",
+        destination: "/embed/embed.js",
+      },
+      {
+        source: "/login",
+        destination: "/auth/login",
+      },
+      // These rewrites are other than booking pages rewrites and so that they aren't redirected to org pages ensure that they happen in beforeFiles
+      ...(isOrganizationsEnabled
+        ? [
+            {
+              ...matcherConfigRootPath,
+              destination: "/team/:orgSlug?isOrgProfile=1",
+            },
+            {
+              ...matcherConfigRootPathEmbed,
+              destination: "/team/:orgSlug/embed?isOrgProfile=1",
+            },
+            {
+              ...matcherConfigUserRoute,
+              destination: "/org/:orgSlug/:user",
+            },
+            {
+              ...matcherConfigUserTypeRoute,
+              destination: "/org/:orgSlug/:user/:type",
+            },
+            {
+              ...matcherConfigUserTypeEmbedRoute,
+              destination: "/org/:orgSlug/:user/:type/embed",
+            },
+          ]
+        : []),
+    ];
+
+    let afterFiles = [
+      {
+        source: "/org/:slug",
+        destination: "/team/:slug",
+      },
+      {
+        source: "/org/:orgSlug/avatar.png",
+        destination: "/api/user/avatar?orgSlug=:orgSlug",
       },
       {
         source: "/team/:teamname/avatar.png",
         destination: "/api/user/avatar?teamname=:teamname",
       },
-      {
-        source: "/forms/:formQuery*",
-        destination: "/apps/routing-forms/routing-link/:formQuery*",
-      },
-      {
-        source: "/router",
-        destination: "/apps/routing-forms/router",
-      },
-      {
-        source: "/success/:path*",
-        has: [
-          {
-            type: "query",
-            key: "uid",
-            value: "(?<uid>.*)",
-          },
-        ],
-        destination: "/booking/:uid/:path*",
-      },
-      {
-        source: "/cancel/:path*",
-        destination: "/booking/:path*",
-      },
+
+      // When updating this also update pagesAndRewritePaths.js
+      ...[
+        {
+          source: "/:user/avatar.png",
+          destination: "/api/user/avatar?username=:user",
+        },
+        {
+          source: "/forms/:formQuery*",
+          destination: "/apps/routing-forms/routing-link/:formQuery*",
+        },
+        {
+          source: "/router",
+          destination: "/apps/routing-forms/router",
+        },
+        {
+          source: "/success/:path*",
+          has: [
+            {
+              type: "query",
+              key: "uid",
+              value: "(?<uid>.*)",
+            },
+          ],
+          destination: "/booking/:uid/:path*",
+        },
+        {
+          source: "/cancel/:path*",
+          destination: "/booking/:path*",
+        },
+      ],
+
       /* TODO: have these files being served from another deployment or CDN {
         source: "/embed/embed.js",
         destination: process.env.NEXT_PUBLIC_EMBED_LIB_URL?,
       }, */
+    ];
+
+    return {
+      beforeFiles,
+      afterFiles,
+    };
+  },
+  async headers() {
+    return [
+      {
+        source: "/auth/:path*",
+        headers: [
+          {
+            key: "X-Frame-Options",
+            value: "DENY",
+          },
+        ],
+      },
+      {
+        source: "/signup",
+        headers: [
+          {
+            key: "X-Frame-Options",
+            value: "DENY",
+          },
+        ],
+      },
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+        ],
+      },
+      ...(isOrganizationsEnabled
+        ? [
+            {
+              ...matcherConfigRootPath,
+              headers: [
+                {
+                  key: "X-Cal-Org-path",
+                  value: "/team/:orgSlug",
+                },
+              ],
+            },
+            {
+              ...matcherConfigUserRoute,
+              headers: [
+                {
+                  key: "X-Cal-Org-path",
+                  value: "/org/:orgSlug/:user",
+                },
+              ],
+            },
+            {
+              ...matcherConfigUserTypeRoute,
+              headers: [
+                {
+                  key: "X-Cal-Org-path",
+                  value: "/org/:orgSlug/:user/:type",
+                },
+              ],
+            },
+            {
+              ...matcherConfigUserTypeEmbedRoute,
+              headers: [
+                {
+                  key: "X-Cal-Org-path",
+                  value: "/org/:orgSlug/:user/:type/embed",
+                },
+              ],
+            },
+          ]
+        : []),
     ];
   },
   async redirects() {
@@ -189,6 +435,11 @@ const nextConfig = {
         permanent: true,
       },
       {
+        source: "/auth",
+        destination: "/auth/login",
+        permanent: false,
+      },
+      {
         source: "/settings",
         destination: "/settings/my-account/profile",
         permanent: true,
@@ -196,6 +447,11 @@ const nextConfig = {
       {
         source: "/settings/teams",
         destination: "/teams",
+        permanent: true,
+      },
+      {
+        source: "/settings/admin",
+        destination: "/settings/admin/flags",
         permanent: true,
       },
       /* V2 testers get redirected to the new settings */
@@ -238,6 +494,54 @@ const nextConfig = {
         destination: "/api/link?action=:action&email=:email&bookingUid=:bookingUid&oldToken=:oldToken",
         permanent: true,
       },
+      {
+        source: "/support",
+        missing: [
+          {
+            type: "header",
+            key: "host",
+            value: orgHostPath,
+          },
+        ],
+        destination: "/event-types?openIntercom=true",
+        permanent: true,
+      },
+      {
+        source: "/apps/categories/video",
+        destination: "/apps/categories/conferencing",
+        permanent: true,
+      },
+      {
+        source: "/apps/installed/video",
+        destination: "/apps/installed/conferencing",
+        permanent: true,
+      },
+      {
+        source: "/apps/installed",
+        destination: "/apps/installed/calendar",
+        permanent: true,
+      },
+      // OAuth callbacks when sent to localhost:3000(w would be expected) should be redirected to corresponding to WEBAPP_URL
+      ...(process.env.NODE_ENV === "development" &&
+      // Safer to enable the redirect only when the user is opting to test out organizations
+      isOrganizationsEnabled &&
+      // Prevent infinite redirect by checking that we aren't already on localhost
+      process.env.NEXT_PUBLIC_WEBAPP_URL !== "http://localhost:3000"
+        ? [
+            {
+              has: [
+                {
+                  type: "header",
+                  key: "host",
+                  value: "localhost:3000",
+                },
+              ],
+              source: "/api/integrations/:args*",
+              destination: `${process.env.NEXT_PUBLIC_WEBAPP_URL}/api/integrations/:args*`,
+              permanent: false,
+            },
+          ]
+        : []),
     ];
 
     if (process.env.NEXT_PUBLIC_WEBAPP_URL === "https://app.cal.com") {
@@ -264,21 +568,15 @@ const nextConfig = {
   },
 };
 
-const sentryWebpackPluginOptions = {
-  silent: true, // Suppresses all logs
-};
-
-const moduleExports = () => plugins.reduce((acc, next) => next(acc), nextConfig);
-
-if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
-  nextConfig.sentry = {
+if (!!process.env.NEXT_PUBLIC_SENTRY_DSN) {
+  nextConfig["sentry"] = {
+    autoInstrumentServerFunctions: true,
     hideSourceMaps: true,
-    // Prevents Sentry from running on this Edge function, where Sentry doesn't work yet (build whould crash the api route).
-    excludeServerRoutes: [/\/api\/social\/og\/image\/?/],
+    // disable source map generation for the server code
+    disableServerWebpackPlugin: !!process.env.SENTRY_DISABLE_SERVER_WEBPACK_PLUGIN,
   };
+
+  plugins.push(withSentryConfig);
 }
 
-// Sentry should be the last thing to export to catch everything right
-module.exports = process.env.NEXT_PUBLIC_SENTRY_DSN
-  ? withSentryConfig(moduleExports, sentryWebpackPluginOptions)
-  : moduleExports;
+module.exports = () => plugins.reduce((acc, next) => next(acc), nextConfig);

@@ -1,2 +1,2 @@
-export { getServerSideProps } from "./[category]";
+"use client";
 export { default } from "./[category]";

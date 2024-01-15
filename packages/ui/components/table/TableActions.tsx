@@ -1,17 +1,18 @@
-import React, { FC } from "react";
-import { IconType } from "react-icons/lib";
+import type { LucideIcon as IconType } from "lucide-react";
+import type { FC } from "react";
+import React from "react";
 
+import type { ButtonBaseProps } from "../button";
+import { Button } from "../button";
 import {
-  Button,
   Dropdown,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownItem,
   DropdownMenuPortal,
   DropdownMenuTrigger,
-  ButtonBaseProps,
-  Icon,
-} from "@calcom/ui";
+} from "../form/dropdown";
+import { ChevronDown, MoreHorizontal } from "../icon";
 
 export type ActionType = {
   id: string;
@@ -45,7 +46,7 @@ export const DropdownActions = ({
     <Dropdown>
       {!actionTrigger ? (
         <DropdownMenuTrigger asChild>
-          <Button type="button" color="secondary" size="icon" StartIcon={Icon.FiMoreHorizontal} />
+          <Button type="button" color="secondary" variant="icon" StartIcon={MoreHorizontal} />
         </DropdownMenuTrigger>
       ) : (
         <DropdownMenuTrigger asChild>{actionTrigger}</DropdownMenuTrigger>
@@ -84,7 +85,7 @@ export const TableActions: FC<Props> = ({ actions }) => {
               href={action.href}
               onClick={action.onClick || defaultAction}
               StartIcon={action.icon}
-              {...(action?.actions ? { EndIcon: Icon.FiChevronDown } : null)}
+              {...(action?.actions ? { EndIcon: ChevronDown } : null)}
               disabled={action.disabled}
               color={action.color || "secondary"}>
               {action.label}

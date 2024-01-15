@@ -1,25 +1,33 @@
-import { GetServerSidePropsContext } from "next";
-import { ChangeEventHandler, useState } from "react";
+"use client";
+
+import type { GetServerSidePropsContext } from "next";
+import type { ChangeEventHandler } from "react";
+import { useState } from "react";
 
 import { getAppRegistry, getAppRegistryWithCredentials } from "@calcom/app-store/_appRegistry";
+import { getLayout } from "@calcom/features/MainLayout";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import getUserAdminTeams from "@calcom/features/ee/teams/lib/getUserAdminTeams";
+import type { UserAdminTeams } from "@calcom/features/ee/teams/lib/getUserAdminTeams";
 import { classNames } from "@calcom/lib";
-import { getSession } from "@calcom/lib/auth";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import type { AppCategories } from "@calcom/prisma/client";
-import { inferSSRProps } from "@calcom/types/inferSSRProps";
+import type { AppCategories } from "@calcom/prisma/enums";
+import type { inferSSRProps } from "@calcom/types/inferSSRProps";
+import type { HorizontalTabItemProps } from "@calcom/ui";
 import {
   AllApps,
   AppStoreCategories,
-  HorizontalTabItemProps,
   HorizontalTabs,
-  Icon,
   TextField,
-  TrendingAppsSlider,
+  PopularAppsSlider,
+  RecentAppsSlider,
 } from "@calcom/ui";
+import { Search } from "@calcom/ui/components/icon";
 
+import PageWrapper from "@components/PageWrapper";
 import AppsLayout from "@components/apps/layouts/AppsLayout";
 
-import { ssgInit } from "@server/lib/ssg";
+import { ssrInit } from "@server/lib/ssr";
 
 const tabs: HorizontalTabItemProps[] = [
   {
@@ -39,20 +47,26 @@ function AppsSearch({
   onChange: ChangeEventHandler<HTMLInputElement>;
   className?: string;
 }) {
+  const { t } = useLocale();
   return (
     <TextField
-      className="!border-gray-100 bg-gray-100 !pl-0 focus:!ring-offset-0"
-      addOnLeading={<Icon.FiSearch className="h-4 w-4 text-gray-500" />}
-      addOnClassname="!border-gray-100"
-      containerClassName={classNames("focus:!ring-offset-0", className)}
+      className="bg-subtle !border-muted !pl-0 focus:!ring-offset-0"
+      addOnLeading={<Search className="text-subtle h-4 w-4" />}
+      addOnClassname="!border-muted"
+      containerClassName={classNames("focus:!ring-offset-0 m-1", className)}
       type="search"
       autoComplete="false"
       onChange={onChange}
+      placeholder={t("search")}
     />
   );
 }
 
-export default function Apps({ categories, appStore }: inferSSRProps<typeof getServerSideProps>) {
+export default function Apps({
+  categories,
+  appStore,
+  userAdminTeams,
+}: Omit<inferSSRProps<typeof getServerSideProps>, "trpcState">) {
   const { t } = useLocale();
   const [searchText, setSearchText] = useState<string | undefined>(undefined);
 
@@ -62,8 +76,8 @@ export default function Apps({ categories, appStore }: inferSSRProps<typeof getS
       heading={t("app_store")}
       subtitle={t("app_store_description")}
       actions={(className) => (
-        <div className="flex w-full flex-col  md:flex-row md:justify-between lg:w-auto">
-          <div className="lg:hidden">
+        <div className="flex w-full flex-col pt-4 md:flex-row md:justify-between md:pt-0 lg:w-auto">
+          <div className="ltr:mr-2 rtl:ml-2 lg:hidden">
             <HorizontalTabs tabs={tabs} />
           </div>
           <div>
@@ -77,29 +91,38 @@ export default function Apps({ categories, appStore }: inferSSRProps<typeof getS
         {!searchText && (
           <>
             <AppStoreCategories categories={categories} />
-            <TrendingAppsSlider items={appStore} />
+            <PopularAppsSlider items={appStore} />
+            <RecentAppsSlider items={appStore} />
           </>
         )}
         <AllApps
           apps={appStore}
           searchText={searchText}
           categories={categories.map((category) => category.name)}
+          userAdminTeams={userAdminTeams}
         />
       </div>
     </AppsLayout>
   );
 }
 
+Apps.PageWrapper = PageWrapper;
+Apps.getLayout = getLayout;
+
 export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssg = await ssgInit(context);
+  const { req, res } = context;
 
-  const session = await getSession(context);
+  const ssr = await ssrInit(context);
 
-  let appStore;
+  const session = await getServerSession({ req, res });
+
+  let appStore, userAdminTeams: UserAdminTeams;
   if (session?.user?.id) {
-    appStore = await getAppRegistryWithCredentials(session.user.id);
+    userAdminTeams = await getUserAdminTeams({ userId: session.user.id, getUserInfo: true });
+    appStore = await getAppRegistryWithCredentials(session.user.id, userAdminTeams);
   } else {
     appStore = await getAppRegistry();
+    userAdminTeams = [];
   }
 
   const categoryQuery = appStore.map(({ categories }) => ({
@@ -111,6 +134,7 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
     }
     return c;
   }, {} as Record<string, number>);
+
   return {
     props: {
       categories: Object.entries(categories)
@@ -122,7 +146,8 @@ export const getServerSideProps = async (context: GetServerSidePropsContext) => 
           return b.count - a.count;
         }),
       appStore,
-      trpcState: ssg.dehydrate(),
+      userAdminTeams,
+      trpcState: ssr.dehydrate(),
     },
   };
 };

@@ -1,7 +1,10 @@
-import { GetServerSidePropsContext } from "next";
-import { getProviders, signIn, getSession, getCsrfToken } from "next-auth/react";
+import type { GetServerSidePropsContext } from "next";
+import { getProviders, signIn, getCsrfToken } from "next-auth/react";
 
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { Button } from "@calcom/ui";
+
+import PageWrapper from "@components/PageWrapper";
 
 type Provider = {
   name: string;
@@ -22,10 +25,14 @@ function signin({ providers }: { providers: Provider[] }) {
   );
 }
 
+signin.PageWrapper = PageWrapper;
+
 export default signin;
 
 export async function getServerSideProps(context: GetServerSidePropsContext) {
-  const session = await getSession(context);
+  const { req, res } = context;
+
+  const session = await getServerSession({ req, res });
   const csrfToken = await getCsrfToken(context);
   const providers = await getProviders();
   if (session) {

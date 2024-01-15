@@ -1,58 +1,88 @@
-import { useRouter } from "next/router";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { HOSTED_CAL_FEATURES } from "@calcom/lib/constants";
 import { getSafeRedirectUrl } from "@calcom/lib/getSafeRedirectUrl";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
 import slugify from "@calcom/lib/slugify";
+import { telemetryEventTypes, useTelemetry } from "@calcom/lib/telemetry";
 import { trpc } from "@calcom/trpc/react";
-import { Avatar, Button, Form, Icon, ImageUploader, TextField } from "@calcom/ui";
+import { Alert, Button, Form, TextField } from "@calcom/ui";
+import { ArrowRight } from "@calcom/ui/components/icon";
 
-import { NewTeamFormValues } from "../lib/types";
+import { useOrgBranding } from "../../organizations/context/provider";
+import { subdomainSuffix } from "../../organizations/lib/orgDomains";
+import type { NewTeamFormValues } from "../lib/types";
 
 const querySchema = z.object({
-  returnTo: z.string(),
+  returnTo: z.string().optional(),
+  slug: z.string().optional(),
 });
 
-export const CreateANewTeamForm = () => {
-  const { t } = useLocale();
-  const router = useRouter();
+const isTeamBillingEnabledClient = !!process.env.NEXT_PUBLIC_STRIPE_PUBLIC_KEY && HOSTED_CAL_FEATURES;
+const flag = isTeamBillingEnabledClient
+  ? {
+      telemetryEvent: telemetryEventTypes.team_checkout_session_created,
+      submitLabel: "checkout",
+    }
+  : {
+      telemetryEvent: telemetryEventTypes.team_created,
+      submitLabel: "continue",
+    };
 
-  const returnToParsed = querySchema.safeParse(router.query);
+export const CreateANewTeamForm = () => {
+  const { t, isLocaleReady } = useLocale();
+  const router = useRouter();
+  const telemetry = useTelemetry();
+  const params = useParamsWithFallback();
+  const parsedQuery = querySchema.safeParse(params);
+  const [serverErrorMessage, setServerErrorMessage] = useState<string | null>(null);
+  const orgBranding = useOrgBranding();
 
   const returnToParam =
-    (returnToParsed.success ? getSafeRedirectUrl(returnToParsed.data.returnTo) : "/settings/teams") ||
+    (parsedQuery.success ? getSafeRedirectUrl(parsedQuery.data.returnTo) : "/settings/teams") ||
     "/settings/teams";
 
-  const newTeamFormMethods = useForm<NewTeamFormValues>();
-
-  const createTeamMutation = trpc.viewer.teams.create.useMutation({
-    onSuccess: (data) => {
-      router.push(`/settings/teams/${data.id}/onboard-members`);
+  const newTeamFormMethods = useForm<NewTeamFormValues>({
+    defaultValues: {
+      slug: parsedQuery.success ? parsedQuery.data.slug : "",
     },
   });
 
-  const validateTeamSlugQuery = trpc.viewer.teams.validateTeamSlug.useQuery(
-    { slug: newTeamFormMethods.watch("slug") },
-    {
-      enabled: false,
-      refetchOnWindowFocus: false,
-    }
-  );
-
-  const validateTeamSlug = async () => {
-    await validateTeamSlugQuery.refetch();
-    if (validateTeamSlugQuery.isFetched) return validateTeamSlugQuery.data || t("team_url_taken");
-  };
+  const createTeamMutation = trpc.viewer.teams.create.useMutation({
+    onSuccess: (data) => {
+      telemetry.event(flag.telemetryEvent);
+      router.push(data.url);
+    },
+    onError: (err) => {
+      if (err.message === "team_url_taken") {
+        newTeamFormMethods.setError("slug", { type: "custom", message: t("url_taken") });
+      } else {
+        setServerErrorMessage(err.message);
+      }
+    },
+  });
 
   return (
     <>
       <Form
         form={newTeamFormMethods}
         handleSubmit={(v) => {
-          if (!createTeamMutation.isLoading) createTeamMutation.mutate(v);
+          if (!createTeamMutation.isLoading) {
+            setServerErrorMessage(null);
+            createTeamMutation.mutate(v);
+          }
         }}>
         <div className="mb-8">
+          {serverErrorMessage && (
+            <div className="mb-4">
+              <Alert severity="error" message={t(serverErrorMessage)} />
+            </div>
+          )}
+
           <Controller
             name="name"
             control={newTeamFormMethods.control}
@@ -63,7 +93,12 @@ export const CreateANewTeamForm = () => {
             render={({ field: { value } }) => (
               <>
                 <TextField
+                  disabled={
+                    /* E2e is too fast and it tries to fill this way before the form is ready */
+                    !isLocaleReady || createTeamMutation.isLoading
+                  }
                   className="mt-2"
+                  placeholder="Acme Inc."
                   name="name"
                   label={t("team_name")}
                   defaultValue={value}
@@ -84,46 +119,27 @@ export const CreateANewTeamForm = () => {
           <Controller
             name="slug"
             control={newTeamFormMethods.control}
-            rules={{ required: t("team_url_required"), validate: async () => await validateTeamSlug() }}
+            rules={{ required: t("team_url_required") }}
             render={({ field: { value } }) => (
               <TextField
                 className="mt-2"
                 name="slug"
+                placeholder="acme"
                 label={t("team_url")}
-                addOnLeading={`${process.env.NEXT_PUBLIC_WEBSITE_URL?.replace("https://", "")?.replace(
-                  "http://",
-                  ""
-                )}/team/`}
+                addOnLeading={`${
+                  orgBranding
+                    ? `${orgBranding.fullDomain.replace("https://", "").replace("http://", "")}/`
+                    : `${subdomainSuffix()}/team/`
+                }`}
+                value={value}
                 defaultValue={value}
                 onChange={(e) => {
-                  newTeamFormMethods.setValue("slug", slugify(e?.target.value), {
+                  newTeamFormMethods.setValue("slug", slugify(e?.target.value, true), {
                     shouldTouch: true,
                   });
+                  newTeamFormMethods.clearErrors("slug");
                 }}
               />
-            )}
-          />
-        </div>
-
-        <div className="mb-8">
-          <Controller
-            control={newTeamFormMethods.control}
-            name="logo"
-            render={({ field: { value } }) => (
-              <div className="flex items-center">
-                <Avatar alt="" imageSrc={value || null} gravatarFallbackMd5="newTeam" size="lg" />
-                <div className="ltr:ml-4 rtl:mr-4">
-                  <ImageUploader
-                    target="avatar"
-                    id="avatar-upload"
-                    buttonMsg={t("update")}
-                    handleAvatarChange={(newAvatar: string) => {
-                      newTeamFormMethods.setValue("logo", newAvatar);
-                    }}
-                    imageSrc={value}
-                  />
-                </div>
-              </div>
             )}
           />
         </div>
@@ -137,17 +153,14 @@ export const CreateANewTeamForm = () => {
             {t("cancel")}
           </Button>
           <Button
-            disabled={createTeamMutation.isLoading}
+            disabled={newTeamFormMethods.formState.isSubmitting || createTeamMutation.isLoading}
             color="primary"
+            EndIcon={ArrowRight}
             type="submit"
-            EndIcon={Icon.FiArrowRight}
             className="w-full justify-center">
-            {t("continue")}
+            {t(flag.submitLabel)}
           </Button>
         </div>
-        {createTeamMutation.isError && (
-          <p className="mt-4 text-red-700">{createTeamMutation.error.message}</p>
-        )}
       </Form>
     </>
   );

@@ -5,12 +5,14 @@ import { test } from "./lib/fixtures";
 
 test.describe.configure({ mode: "serial" });
 
+test.afterEach(({ users }) => users.deleteAll());
+
 test.describe("Onboarding", () => {
   test.describe("Onboarding v2", () => {
     test("Onboarding Flow", async ({ page, users }) => {
       const user = await users.create({ completedOnboarding: false, name: null });
-      await user.login();
-
+      await user.apiLogin();
+      await page.goto("/getting-started");
       // tests whether the user makes it to /getting-started
       // after login with completedOnboarding false
       await page.waitForURL("/getting-started");
@@ -24,7 +26,11 @@ test.describe("Onboarding", () => {
         await page.locator("input[name=username]").fill("new user onboarding");
         await page.locator("input[name=name]").fill("new user 2");
         await page.locator("input[role=combobox]").click();
-        await page.locator("text=Eastern Time").click();
+        await page
+          .locator("*")
+          .filter({ hasText: /^Europe\/London/ })
+          .first()
+          .click();
 
         await page.locator("button[type=submit]").click();
 
@@ -41,38 +47,36 @@ test.describe("Onboarding", () => {
         // tests skip button, we don't want to test entire flow.
         await page.locator("button[data-testid=skip-step]").click();
 
-        await expect(page).toHaveURL(/.*setup-availability/);
+        await expect(page).toHaveURL(/.*connected-video/);
       });
 
       await test.step("step 3", async () => {
+        const isDisabled = await page.locator("button[data-testid=save-video-button]").isDisabled();
+        await expect(isDisabled).toBe(true);
+        // tests skip button, we don't want to test entire flow.
+        await page.locator("button[data-testid=skip-step]").click();
+
+        await expect(page).toHaveURL(/.*setup-availability/);
+      });
+
+      await test.step("step 4", async () => {
         const isDisabled = await page.locator("button[data-testid=save-availability]").isDisabled();
         await expect(isDisabled).toBe(false);
         // same here, skip this step.
-        await page.locator("button[data-testid=skip-step]").click();
+        await page.locator("button[data-testid=save-availability]").click();
 
         await expect(page).toHaveURL(/.*user-profile/);
       });
 
-      await test.step("step 4", async () => {
-        const finishButton = await page.locator("button[type=submit]");
-        // bio field is required, try to submit (and test whether that fails)
-        await finishButton.click();
-
-        const requiredBio = await page.locator("data-testid=required");
-        await expect(requiredBio).toBeVisible();
-
-        await page.locator("textarea[name=bio]").fill("Something about me");
-
-        const isDisabled = await finishButton.isDisabled();
-        await expect(isDisabled).toBe(false);
-
-        await finishButton.click();
+      await test.step("step 5", async () => {
+        await page.locator("button[type=submit]").click();
 
         // should redirect to /event-types after onboarding
         await page.waitForURL("/event-types");
 
         const userComplete = await user.self();
-        expect(userComplete.bio).toBe("Something about me");
+
+        expect(userComplete.bio?.replace("<p><br></p>", "").length).toBe(0);
       });
     });
   });

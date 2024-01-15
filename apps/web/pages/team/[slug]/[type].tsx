@@ -1,167 +1,152 @@
-import { GetServerSidePropsContext } from "next";
+import type { GetServerSidePropsContext } from "next";
+import { z } from "zod";
 
-import { privacyFilteredLocations, LocationObject } from "@calcom/core/location";
-import { parseRecurringEvent } from "@calcom/lib";
+import { Booker } from "@calcom/atoms";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { getBookerWrapperClasses } from "@calcom/features/bookings/Booker/utils/getBookerWrapperClasses";
+import { BookerSeo } from "@calcom/features/bookings/components/BookerSeo";
+import { getBookingForReschedule, getMultipleDurationValue } from "@calcom/features/bookings/lib/get-booking";
+import type { GetBookingType } from "@calcom/features/bookings/lib/get-booking";
+import { getSlugOrRequestedSlug } from "@calcom/features/ee/organizations/lib/orgDomains";
+import { orgDomainConfig } from "@calcom/features/ee/organizations/lib/orgDomains";
+import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
-import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
+import { RedirectType } from "@calcom/prisma/client";
 
-import { asStringOrNull } from "@lib/asStringOrNull";
-import { getWorkingHours } from "@lib/availability";
-import getBooking, { GetBookingType } from "@lib/getBooking";
-import { inferSSRProps } from "@lib/types/inferSSRProps";
-import { EmbedProps } from "@lib/withEmbedSsr";
+import type { inferSSRProps } from "@lib/types/inferSSRProps";
+import type { EmbedProps } from "@lib/withEmbedSsr";
 
-import AvailabilityPage from "@components/booking/pages/AvailabilityPage";
+import PageWrapper from "@components/PageWrapper";
 
-import { ssgInit } from "@server/lib/ssg";
+import { getTemporaryOrgRedirect } from "../../../lib/getTemporaryOrgRedirect";
 
-export type AvailabilityTeamPageProps = inferSSRProps<typeof getServerSideProps> & EmbedProps;
+export type PageProps = inferSSRProps<typeof getServerSideProps> & EmbedProps;
 
-export default function TeamType(props: AvailabilityTeamPageProps) {
-  return <AvailabilityPage {...props} />;
+export default function Type({
+  slug,
+  user,
+  booking,
+  away,
+  isEmbed,
+  isBrandingHidden,
+  entity,
+  duration,
+  isInstantMeeting,
+}: PageProps) {
+  return (
+    <main className={getBookerWrapperClasses({ isEmbed: !!isEmbed })}>
+      <BookerSeo
+        username={user}
+        eventSlug={slug}
+        rescheduleUid={booking?.uid}
+        hideBranding={isBrandingHidden}
+        isTeamEvent
+        entity={entity}
+        bookingData={booking}
+      />
+      <Booker
+        username={user}
+        eventSlug={slug}
+        bookingData={booking}
+        isAway={away}
+        isInstantMeeting={isInstantMeeting}
+        hideBranding={isBrandingHidden}
+        isTeamEvent
+        entity={entity}
+        duration={duration}
+      />
+    </main>
+  );
 }
-TeamType.isThemeSupported = true;
 
+Type.PageWrapper = PageWrapper;
+Type.isBookingPage = true;
+
+const paramsSchema = z.object({
+  type: z.string().transform((s) => slugify(s)),
+  slug: z.string().transform((s) => slugify(s)),
+});
+
+// Booker page fetches a tiny bit of data server side:
+// 1. Check if team exists, to show 404
+// 2. If rescheduling, get the booking details
 export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const slugParam = asStringOrNull(context.query.slug);
-  const typeParam = asStringOrNull(context.query.type);
-  const dateParam = asStringOrNull(context.query.date);
-  const rescheduleUid = asStringOrNull(context.query.rescheduleUid);
-  const ssg = await ssgInit(context);
+  const session = await getServerSession(context);
+  const { slug: teamSlug, type: meetingSlug } = paramsSchema.parse(context.params);
+  const { rescheduleUid, duration: queryDuration, isInstantMeeting: queryIsInstantMeeting } = context.query;
+  const { ssrInit } = await import("@server/lib/ssr");
+  const ssr = await ssrInit(context);
+  const { currentOrgDomain, isValidOrgDomain } = orgDomainConfig(context.req, context.params?.orgSlug);
+  const isOrgContext = currentOrgDomain && isValidOrgDomain;
 
-  if (!slugParam || !typeParam) {
-    throw new Error(`File is not named [idOrSlug]/[user]`);
+  if (!isOrgContext) {
+    const redirect = await getTemporaryOrgRedirect({
+      slug: teamSlug,
+      redirectType: RedirectType.Team,
+      eventTypeSlug: meetingSlug,
+      currentQuery: context.query,
+    });
+
+    if (redirect) {
+      return redirect;
+    }
   }
 
   const team = await prisma.team.findFirst({
     where: {
-      slug: slugParam,
+      ...getSlugOrRequestedSlug(teamSlug),
+      parent: isValidOrgDomain && currentOrgDomain ? getSlugOrRequestedSlug(currentOrgDomain) : null,
     },
     select: {
       id: true,
-      name: true,
-      slug: true,
-      logo: true,
       hideBranding: true,
-      eventTypes: {
-        where: {
-          slug: typeParam,
-        },
-        select: {
-          id: true,
-          slug: true,
-          hidden: true,
-          hosts: {
-            select: {
-              isFixed: true,
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  avatar: true,
-                  username: true,
-                  timeZone: true,
-                  hideBranding: true,
-                  brandColor: true,
-                  darkBrandColor: true,
-                },
-              },
-            },
-          },
-          title: true,
-          availability: true,
-          description: true,
-          length: true,
-          schedulingType: true,
-          periodType: true,
-          periodStartDate: true,
-          periodEndDate: true,
-          periodDays: true,
-          periodCountCalendarDays: true,
-          minimumBookingNotice: true,
-          beforeEventBuffer: true,
-          afterEventBuffer: true,
-          recurringEvent: true,
-          requiresConfirmation: true,
-          locations: true,
-          price: true,
-          currency: true,
-          timeZone: true,
-          slotInterval: true,
-          metadata: true,
-          seatsPerTimeSlot: true,
-          schedule: {
-            select: {
-              timeZone: true,
-              availability: true,
-            },
-          },
-        },
-      },
     },
   });
 
-  if (!team || team.eventTypes.length != 1) {
+  if (!team) {
     return {
       notFound: true,
-    } as {
-      notFound: true;
-    };
+    } as const;
   }
-
-  const [eventType] = team.eventTypes;
-
-  const timeZone = eventType.schedule?.timeZone || eventType.timeZone || undefined;
-
-  const workingHours = getWorkingHours(
-    {
-      timeZone,
-    },
-    eventType.schedule?.availability || eventType.availability
-  );
-
-  eventType.schedule = null;
-
-  const locations = eventType.locations ? (eventType.locations as LocationObject[]) : [];
-  const eventTypeObject = Object.assign({}, eventType, {
-    metadata: EventTypeMetaDataSchema.parse(eventType.metadata || {}),
-    periodStartDate: eventType.periodStartDate?.toString() ?? null,
-    periodEndDate: eventType.periodEndDate?.toString() ?? null,
-    recurringEvent: parseRecurringEvent(eventType.recurringEvent),
-    locations: privacyFilteredLocations(locations),
-    users: eventType.hosts.map(({ user: { name, username, hideBranding, timeZone } }) => ({
-      name,
-      username,
-      hideBranding,
-      timeZone,
-    })),
-  });
-
-  eventTypeObject.availability = [];
 
   let booking: GetBookingType | null = null;
   if (rescheduleUid) {
-    booking = await getBooking(prisma, rescheduleUid);
+    booking = await getBookingForReschedule(`${rescheduleUid}`, session?.user?.id);
+  }
+
+  const org = isValidOrgDomain ? currentOrgDomain : null;
+  // We use this to both prefetch the query on the server,
+  // as well as to check if the event exist, so we c an show a 404 otherwise.
+  const eventData = await ssr.viewer.public.event.fetch({
+    username: teamSlug,
+    eventSlug: meetingSlug,
+    isTeamEvent: true,
+    org,
+  });
+
+  if (!eventData) {
+    return {
+      notFound: true,
+    } as const;
   }
 
   return {
     props: {
-      profile: {
-        name: team.name || team.slug,
-        slug: team.slug,
-        image: team.logo,
-        theme: null as string | null,
-        weekStart: "Sunday",
-        brandColor: "" /* TODO: Add a way to set a brand color for Teams */,
-        darkBrandColor: "" /* TODO: Add a way to set a brand color for Teams */,
-      },
-      date: dateParam,
-      eventType: eventTypeObject,
-      workingHours,
-      previousPage: context.req.headers.referer ?? null,
+      entity: eventData.entity,
+      duration: getMultipleDurationValue(
+        eventData.metadata?.multipleDuration,
+        queryDuration,
+        eventData.length
+      ),
       booking,
-      trpcState: ssg.dehydrate(),
-      isBrandingHidden: team.hideBranding,
+      away: false,
+      user: teamSlug,
+      teamId: team.id,
+      slug: meetingSlug,
+      trpcState: ssr.dehydrate(),
+      isBrandingHidden: team?.hideBranding,
+      isInstantMeeting: eventData.isInstantEvent && queryIsInstantMeeting ? true : false,
+      themeBasis: null,
     },
   };
 };

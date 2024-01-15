@@ -1,12 +1,11 @@
-import { GetServerSidePropsContext } from "next";
+"use client";
 
 import AdminAppsList from "@calcom/features/apps/AdminAppsList";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Meta } from "@calcom/ui";
 
+import PageWrapper from "@components/PageWrapper";
 import { getLayout } from "@components/auth/layouts/AdminLayout";
-
-import { ssrInit } from "@server/lib/ssr";
 
 function AdminAppsView() {
   const { t } = useLocale();
@@ -19,15 +18,6 @@ function AdminAppsView() {
 }
 
 AdminAppsView.getLayout = getLayout;
-
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-
-  return {
-    props: {
-      trpcState: ssr.dehydrate(),
-    },
-  };
-};
+AdminAppsView.PageWrapper = PageWrapper;
 
 export default AdminAppsView;

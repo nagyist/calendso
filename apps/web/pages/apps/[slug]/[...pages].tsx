@@ -1,13 +1,16 @@
-import { GetServerSidePropsContext } from "next";
-import { useRouter } from "next/router";
+import type { GetServerSidePropsContext } from "next";
 
-import RoutingFormsRoutingConfig from "@calcom/app-store/ee/routing-forms/pages/app-routing.config";
+import { getAppWithMetadata } from "@calcom/app-store/_appRegistry";
+import RoutingFormsRoutingConfig from "@calcom/app-store/routing-forms/pages/app-routing.config";
 import TypeformRoutingConfig from "@calcom/app-store/typeform/pages/app-routing.config";
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
 import prisma from "@calcom/prisma";
-import { AppGetServerSideProps } from "@calcom/types/AppGetServerSideProps";
+import type { AppGetServerSideProps } from "@calcom/types/AppGetServerSideProps";
 
-import { AppProps } from "@lib/app-providers";
-import { getSession } from "@lib/auth";
+import type { AppProps } from "@lib/app-providers";
+
+import PageWrapper from "@components/PageWrapper";
 
 import { ssrInit } from "@server/lib/ssr";
 
@@ -15,7 +18,8 @@ type AppPageType = {
   getServerSideProps: AppGetServerSideProps;
   // A component than can accept any properties
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: ((props: any) => JSX.Element) & Pick<AppProps["Component"], "isThemeSupported" | "getLayout">;
+  default: ((props: any) => JSX.Element) &
+    Pick<AppProps["Component"], "isBookingPage" | "getLayout" | "PageWrapper">;
 };
 
 type Found = {
@@ -43,7 +47,7 @@ function getRoute(appName: string, pages: string[]) {
     } as NotFound;
   }
   const mainPage = pages[0];
-  const appPage = routingConfig[mainPage] as AppPageType;
+  const appPage = routingConfig.layoutHandler || (routingConfig[mainPage] as AppPageType);
 
   if (!appPage) {
     return {
@@ -55,8 +59,8 @@ function getRoute(appName: string, pages: string[]) {
 
 const AppPage: AppPageType["default"] = function AppPage(props) {
   const appName = props.appName;
-  const router = useRouter();
-  const pages = router.query.pages as string[];
+  const params = useParamsWithFallback();
+  const pages = (params.pages || []) as string[];
   const route = getRoute(appName, pages);
 
   const componentProps = {
@@ -70,17 +74,17 @@ const AppPage: AppPageType["default"] = function AppPage(props) {
   return <route.Component {...componentProps} />;
 };
 
-AppPage.isThemeSupported = ({ router }) => {
+AppPage.isBookingPage = ({ router }) => {
   const route = getRoute(router.query.slug as string, router.query.pages as string[]);
   if (route.notFound) {
     return false;
   }
-  const isThemeSupported = route.Component.isThemeSupported;
-  if (typeof isThemeSupported === "function") {
-    return isThemeSupported({ router });
+  const isBookingPage = route.Component.isBookingPage;
+  if (typeof isBookingPage === "function") {
+    return isBookingPage({ router });
   }
 
-  return !!isThemeSupported;
+  return !!isBookingPage;
 };
 
 AppPage.getLayout = (page, router) => {
@@ -94,6 +98,8 @@ AppPage.getLayout = (page, router) => {
   return route.Component.getLayout(page, router);
 };
 
+AppPage.PageWrapper = PageWrapper;
+
 export default AppPage;
 
 export async function getServerSideProps(
@@ -103,7 +109,7 @@ export async function getServerSideProps(
     appPages?: string[];
   }>
 ) {
-  const { params } = context;
+  const { params, req, res } = context;
   if (!params) {
     return {
       notFound: true,
@@ -120,8 +126,14 @@ export async function getServerSideProps(
     // appPages is actually hardcoded here and no matter the fileName the same variable would be used.
     // We can write some validation logic later on that ensures that [...appPages].tsx file exists
     params.appPages = pages.slice(1);
-    const session = await getSession({ req: context.req });
+    const session = await getServerSession({ req, res });
     const user = session?.user;
+    const app = await getAppWithMetadata({ slug: appName });
+    if (!app) {
+      return {
+        notFound: true,
+      };
+    }
 
     const result = await route.getServerSideProps(
       context as GetServerSidePropsContext<{
@@ -148,7 +160,7 @@ export async function getServerSideProps(
     return {
       props: {
         appName,
-        appUrl: `/apps/${appName}`,
+        appUrl: app.simplePath || `/apps/${appName}`,
         ...result.props,
       },
     };

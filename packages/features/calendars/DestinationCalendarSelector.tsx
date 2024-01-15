@@ -1,11 +1,13 @@
 import classNames from "classnames";
 import { useEffect, useState } from "react";
-import { components, OptionProps, SingleValueProps } from "react-select";
+import type { OptionProps, SingleValueProps } from "react-select";
+import { components } from "react-select";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { DestinationCalendar } from "@calcom/prisma/client";
+import type { DestinationCalendar } from "@calcom/prisma/client";
 import { trpc } from "@calcom/trpc/react";
-import { Select } from "@calcom/ui";
+import { Select, Badge } from "@calcom/ui";
+import { Check } from "@calcom/ui/components/icon";
 
 interface Props {
   onChange: (value: { externalId: string; integration: string }) => void;
@@ -15,6 +17,7 @@ interface Props {
   destinationCalendar?: DestinationCalendar | null;
   value: string | undefined;
   maxWidth?: number;
+  hideAdvancedText?: boolean;
 }
 
 interface Option {
@@ -27,7 +30,7 @@ const SingleValueComponent = ({ ...props }: SingleValueProps<Option>) => {
   const { label, subtitle } = props.data;
   return (
     <components.SingleValue {...props} className="flex space-x-1">
-      <p>{label}</p> <p className=" text-gray-500">{subtitle}</p>
+      <p>{label}</p> <p className=" text-subtle">{subtitle}</p>
     </components.SingleValue>
   );
 };
@@ -36,7 +39,10 @@ const OptionComponent = ({ ...props }: OptionProps<Option>) => {
   const { label } = props.data;
   return (
     <components.Option {...props}>
-      <span>{label}</span>
+      <div className="flex">
+        <span className="mr-auto">{label}</span>
+        {props.isSelected && <Check className="ml-2 h-4 w-4" />}
+      </div>
     </components.Option>
   );
 };
@@ -46,6 +52,7 @@ const DestinationCalendarSelector = ({
   isLoading,
   value,
   hidePlaceholder,
+  hideAdvancedText,
   maxWidth,
   destinationCalendar,
 }: Props): JSX.Element | null => {
@@ -65,7 +72,7 @@ const DestinationCalendarSelector = ({
         width: "100%",
         display: "flex",
         ":before": {
-          content: `'${t("select_destination_calendar")}:'`,
+          content: `'${t("create_events_on")}:'`,
           display: "block",
           marginRight: 8,
         },
@@ -117,21 +124,20 @@ const DestinationCalendarSelector = ({
         })),
     })) ?? [];
 
-  // Get primary calendar, which is shown in the placeholder since this is the calendar that will
-  // be used when no destination calendar is selected.
-  const primaryCalendar = query.data.connectedCalendars.filter((cal) => Boolean(cal.primary))[0];
+  const queryDestinationCalendar = query.data.destinationCalendar;
 
   return (
-    <div className="relative" title={`${t("select_destination_calendar")}: ${selectedOption?.label || ""}`}>
+    <div className="relative" title={`${t("create_events_on")}: ${selectedOption?.label || ""}`}>
       <Select
         name="primarySelectedCalendar"
         placeholder={
           !hidePlaceholder ? (
-            `${t("select_destination_calendar")}`
+            `${t("create_events_on")}`
           ) : (
-            <span>
-              {t("default_calendar_selected")}{" "}
-              {primaryCalendar?.primary?.externalId && `(${primaryCalendar?.primary?.externalId})`}
+            <span className="text-default min-w-0 overflow-hidden truncate whitespace-nowrap">
+              <Badge variant="blue">Default</Badge>{" "}
+              {queryDestinationCalendar.name &&
+                `${queryDestinationCalendar.name} (${queryDestinationCalendar?.integrationTitle} - ${queryDestinationCalendar.primaryEmail})`}
             </span>
           )
         }
@@ -139,16 +145,6 @@ const DestinationCalendarSelector = ({
         styles={{
           placeholder: (styles) => ({ ...styles, ...content(hidePlaceholder) }),
           singleValue: (styles) => ({ ...styles, ...content(hidePlaceholder) }),
-          option: (defaultStyles, state) => ({
-            ...defaultStyles,
-            backgroundColor: state.isSelected
-              ? state.isFocused
-                ? "var(--brand-color)"
-                : "var(--brand-color)"
-              : state.isFocused
-              ? "var(--brand-color-dark-mode)"
-              : "var(--brand-text-color)",
-          }),
           control: (defaultStyles) => {
             return {
               ...defaultStyles,
@@ -161,7 +157,7 @@ const DestinationCalendarSelector = ({
         }}
         isSearchable={false}
         className={classNames(
-          "mt-1 mb-2 block w-full min-w-0 flex-1 rounded-none rounded-r-sm border-gray-300 text-sm"
+          "border-default my-2 block w-full min-w-0 flex-1 rounded-none rounded-r-sm text-sm"
         )}
         onChange={(newValue) => {
           setSelectedOption(newValue);
@@ -182,6 +178,9 @@ const DestinationCalendarSelector = ({
         components={{ SingleValue: SingleValueComponent, Option: OptionComponent }}
         isMulti={false}
       />
+      {hideAdvancedText ? null : (
+        <p className="text-sm leading-tight">{t("you_can_override_calendar_in_advanced_tab")}</p>
+      )}
     </div>
   );
 };

@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { useRouter } from "next/router";
-import { ComponentProps, Fragment } from "react";
+import { Fragment } from "react";
 
 import classNames from "@calcom/lib/classNames";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { SVGComponent } from "@calcom/types/SVGComponent";
+import { useUrlMatchesCurrentUrl } from "@calcom/lib/hooks/useUrlMatchesCurrentUrl";
+import type { SVGComponent } from "@calcom/types/SVGComponent";
 
-import { Icon } from "../../..";
+import { ChevronRight, ExternalLink } from "../../icon";
 import { Skeleton } from "../../skeleton";
 
 export type VerticalTabItemProps = {
@@ -22,22 +22,24 @@ export type VerticalTabItemProps = {
   disableChevron?: boolean;
   href: string;
   isExternalLink?: boolean;
-  linkProps?: Omit<ComponentProps<typeof Link>, "href">;
+  linkShallow?: boolean;
+  linkScroll?: boolean;
   avatar?: string;
+  iconClassName?: string;
 };
 
-const VerticalTabItem = function ({
+const VerticalTabItem = ({
   name,
   href,
   info,
   isChild,
   disableChevron,
-  linkProps,
+  linkShallow,
+  linkScroll,
   ...props
-}: VerticalTabItemProps) {
+}: VerticalTabItemProps) => {
   const { t } = useLocale();
-  const { asPath } = useRouter();
-  const isCurrent = asPath.startsWith(href);
+  const isCurrent = useUrlMatchesCurrentUrl(href);
 
   return (
     <Fragment key={name}>
@@ -46,11 +48,12 @@ const VerticalTabItem = function ({
           <Link
             key={name}
             href={href}
-            {...linkProps}
+            shallow={linkShallow}
+            scroll={linkScroll}
             target={props.isExternalLink ? "_blank" : "_self"}
             className={classNames(
-              props.textClassNames || "text-sm font-medium leading-none text-gray-600",
-              "min-h-9 group flex w-64 flex-row items-center rounded-md px-2 py-[10px] hover:bg-gray-100 group-hover:text-gray-700 [&[aria-current='page']]:bg-gray-200 [&[aria-current='page']]:text-gray-900",
+              props.textClassNames || "text-default text-sm font-medium leading-none",
+              "min-h-8 hover:bg-subtle [&[aria-current='page']]:bg-emphasis [&[aria-current='page']]:text-emphasis group-hover:text-default group flex w-64 flex-row items-center rounded-md px-3 py-[10px] transition",
               props.disabled && "pointer-events-none !opacity-30",
               (isChild || !props.icon) && "ml-7 w-auto ltr:mr-5 rtl:ml-5",
               !info ? "h-6" : "h-14",
@@ -59,14 +62,20 @@ const VerticalTabItem = function ({
             data-testid={`vertical-tab-${name}`}
             aria-current={isCurrent ? "page" : undefined}>
             {props.icon && (
-              <props.icon className="h-[16px] w-[16px] stroke-[2px] ltr:mr-[10px] rtl:ml-[10px] md:mt-0" />
+              <props.icon
+                className={classNames(
+                  "mr-2 h-[16px] w-[16px] stroke-[2px] ltr:mr-2 rtl:ml-2 md:mt-0",
+                  props.iconClassName
+                )}
+                data-testid="icon-component"
+              />
             )}
             <div className="h-fit">
               <span className="flex items-center space-x-2 rtl:space-x-reverse">
-                <Skeleton title={t(name)} as="p" className="max-w-36 min-h-4 truncate">
+                <Skeleton title={t(name)} as="p" className="max-w-36 min-h-4 mt-px truncate">
                   {t(name)}
                 </Skeleton>
-                {props.isExternalLink ? <Icon.FiExternalLink /> : null}
+                {props.isExternalLink ? <ExternalLink data-testid="external-link" /> : null}
               </span>
               {info && (
                 <Skeleton as="p" title={t(info)} className="max-w-44 mt-1 truncate text-xs font-normal">
@@ -76,10 +85,11 @@ const VerticalTabItem = function ({
             </div>
             {!disableChevron && isCurrent && (
               <div className="ml-auto self-center">
-                <Icon.FiChevronRight
+                <ChevronRight
                   width={20}
                   height={20}
-                  className="h-auto w-[20px] stroke-[1.5px] text-gray-700"
+                  className="text-default h-auto w-[20px] stroke-[1.5px]"
+                  data-testid="chevron-right"
                 />
               </div>
             )}

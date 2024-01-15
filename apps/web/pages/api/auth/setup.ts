@@ -1,13 +1,13 @@
-import { IdentityProvider } from "@prisma/client";
-import { NextApiRequest, NextApiResponse } from "next";
+import type { NextApiRequest } from "next";
 import z from "zod";
 
-import { isPasswordValid } from "@calcom/lib/auth";
-import { hashPassword } from "@calcom/lib/auth";
+import { hashPassword } from "@calcom/features/auth/lib/hashPassword";
+import { isPasswordValid } from "@calcom/features/auth/lib/isPasswordValid";
 import { HttpError } from "@calcom/lib/http-error";
 import { defaultHandler, defaultResponder } from "@calcom/lib/server";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
+import { IdentityProvider } from "@calcom/prisma/enums";
 
 const querySchema = z.object({
   username: z
@@ -50,7 +50,7 @@ async function handler(req: NextApiRequest) {
     },
   });
 
-  return { message: "First admin user created successfuly." };
+  return { message: "First admin user created successfully." };
 }
 
 export default defaultHandler({

@@ -1,150 +1,66 @@
-import { useRouter } from "next/router";
-import z from "zod";
+"use client";
 
-import { AppSettings } from "@calcom/app-store/_components/AppSettings";
-import { InstallAppButton } from "@calcom/app-store/components";
-import { InstalledAppVariants } from "@calcom/app-store/utils";
-import DisconnectIntegration from "@calcom/features/apps/components/DisconnectIntegration";
+import { useReducer } from "react";
+import { z } from "zod";
+
+import DisconnectIntegrationModal from "@calcom/features/apps/components/DisconnectIntegrationModal";
+import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { RouterOutputs, trpc } from "@calcom/trpc/react";
-import { App } from "@calcom/types/App";
-import { AppGetServerSidePropsContext } from "@calcom/types/AppGetServerSideProps";
+import { AppCategories } from "@calcom/prisma/enums";
+import { trpc } from "@calcom/trpc/react";
+import type { AppGetServerSidePropsContext } from "@calcom/types/AppGetServerSideProps";
+import { Button, EmptyScreen, AppSkeletonLoader as SkeletonLoader, ShellSubHeading } from "@calcom/ui";
+import type { LucideIcon } from "@calcom/ui/components/icon";
 import {
-  Alert,
-  Button,
-  EmptyScreen,
-  Icon,
-  List,
-  AppSkeletonLoader as SkeletonLoader,
-  ShellSubHeading,
-} from "@calcom/ui";
+  BarChart,
+  Calendar,
+  Contact,
+  CreditCard,
+  Grid,
+  Mail,
+  Plus,
+  Share2,
+  Video,
+} from "@calcom/ui/components/icon";
 
 import { QueryCell } from "@lib/QueryCell";
 
+import PageWrapper from "@components/PageWrapper";
+import { AppList } from "@components/apps/AppList";
 import { CalendarListContainer } from "@components/apps/CalendarListContainer";
-import IntegrationListItem from "@components/apps/IntegrationListItem";
 import InstalledAppsLayout from "@components/apps/layouts/InstalledAppsLayout";
 
-function ConnectOrDisconnectIntegrationButton(props: {
-  credentialIds: number[];
-  type: App["type"];
-  isGlobal?: boolean;
-  installed?: boolean;
-  invalidCredentialIds?: number[];
-}) {
-  const { type, credentialIds, isGlobal, installed } = props;
-  const { t } = useLocale();
-  const [credentialId] = credentialIds;
-
-  const utils = trpc.useContext();
-  const handleOpenChange = () => {
-    utils.viewer.integrations.invalidate();
-  };
-
-  if (credentialId) {
-    if (type === "stripe_payment") {
-      return (
-        <DisconnectIntegration
-          credentialId={credentialId}
-          trashIcon
-          onSuccess={handleOpenChange}
-          buttonProps={{ className: "border border-gray-300" }}
-        />
-      );
-    }
-
-    return (
-      <DisconnectIntegration
-        credentialId={credentialId}
-        trashIcon
-        onSuccess={handleOpenChange}
-        buttonProps={{ className: "border border-gray-300" }}
-      />
-    );
-  }
-
-  if (!installed) {
-    return (
-      <div className="flex items-center truncate">
-        <Alert severity="warning" title={t("not_installed")} />
-      </div>
-    );
-  }
-  /** We don't need to "Connect", just show that it's installed */
-  if (isGlobal) {
-    return (
-      <div className="truncate px-3 py-2">
-        <h3 className="text-sm font-medium text-gray-700">{t("default")}</h3>
-      </div>
-    );
-  }
-  return (
-    <InstallAppButton
-      type={type}
-      render={(buttonProps) => (
-        <Button color="secondary" {...buttonProps} data-testid="integration-connection-button">
-          {t("install")}
-        </Button>
-      )}
-      onChanged={handleOpenChange}
-    />
-  );
-}
-
 interface IntegrationsContainerProps {
-  variant?: typeof InstalledAppVariants[number];
-  exclude?: typeof InstalledAppVariants[number][];
+  variant?: AppCategories;
+  exclude?: AppCategories[];
+  handleDisconnect: (credentialId: number) => void;
 }
 
-interface IntegrationsListProps {
-  variant?: IntegrationsContainerProps["variant"];
-  data: RouterOutputs["viewer"]["integrations"];
-}
-
-const IntegrationsList = ({ data }: IntegrationsListProps) => {
-  return (
-    <List className="flex flex-col gap-6" noBorderTreatment>
-      {data.items
-        .filter((item) => item.invalidCredentialIds)
-        .map((item) => (
-          <IntegrationListItem
-            name={item.name}
-            slug={item.slug}
-            key={item.title}
-            title={item.title}
-            logo={item.logo}
-            description={item.description}
-            separate={true}
-            invalidCredential={item.invalidCredentialIds.length > 0}
-            actions={
-              <div className="flex w-16 justify-end">
-                <ConnectOrDisconnectIntegrationButton
-                  credentialIds={item.credentialIds}
-                  type={item.type}
-                  isGlobal={item.isGlobal}
-                  installed
-                  invalidCredentialIds={item.invalidCredentialIds}
-                />
-              </div>
-            }>
-            <AppSettings slug={item.slug} />
-          </IntegrationListItem>
-        ))}
-    </List>
-  );
-};
-
-const IntegrationsContainer = ({ variant, exclude }: IntegrationsContainerProps): JSX.Element => {
+const IntegrationsContainer = ({
+  variant,
+  exclude,
+  handleDisconnect,
+}: IntegrationsContainerProps): JSX.Element => {
   const { t } = useLocale();
-  const query = trpc.viewer.integrations.useQuery({ variant, exclude, onlyInstalled: true });
-  const emptyIcon = {
-    calendar: Icon.FiCalendar,
-    conferencing: Icon.FiVideo,
-    automation: Icon.FiShare2,
-    analytics: Icon.FiBarChart,
-    payment: Icon.FiCreditCard,
-    web3: Icon.FiBarChart,
-    other: Icon.FiGrid,
+  const query = trpc.viewer.integrations.useQuery({
+    variant,
+    exclude,
+    onlyInstalled: true,
+    includeTeamInstalledApps: true,
+  });
+
+  // TODO: Refactor and reuse getAppCategories?
+  const emptyIcon: Record<AppCategories, LucideIcon> = {
+    calendar: Calendar,
+    conferencing: Video,
+    automation: Share2,
+    analytics: BarChart,
+    payment: CreditCard,
+    other: Grid,
+    web3: CreditCard, // deprecated
+    video: Video, // deprecated
+    messaging: Mail,
+    crm: Contact,
   };
 
   return (
@@ -152,47 +68,43 @@ const IntegrationsContainer = ({ variant, exclude }: IntegrationsContainerProps)
       query={query}
       customLoader={<SkeletonLoader />}
       success={({ data }) => {
+        if (!data.items.length) {
+          return (
+            <EmptyScreen
+              Icon={emptyIcon[variant || "other"]}
+              headline={t("no_category_apps", {
+                category: (variant && t(variant).toLowerCase()) || t("other").toLowerCase(),
+              })}
+              description={t(`no_category_apps_description_${variant || "other"}`)}
+              buttonRaw={
+                <Button
+                  color="secondary"
+                  data-testid={`connect-${variant || "other"}-apps`}
+                  href={variant ? `/apps/categories/${variant}` : "/apps/categories/other"}>
+                  {t(`connect_${variant || "other"}_apps`)}
+                </Button>
+              }
+            />
+          );
+        }
         return (
-          <>
-            {data.items.length > 0 ? (
-              <div className="rounded-md border border-gray-200 p-7">
-                <ShellSubHeading
-                  title={t(variant || "other")}
-                  subtitle={t(`installed_app_${variant || "other"}_description`)}
-                  className="mb-6"
-                  actions={
-                    <Button
-                      href={
-                        variant
-                          ? `/apps/categories/${variant === "conferencing" ? "video" : variant}`
-                          : "/apps"
-                      }
-                      color="secondary"
-                      StartIcon={Icon.FiPlus}>
-                      {t("add")}
-                    </Button>
-                  }
-                />
-                <IntegrationsList data={data} variant={variant} />
-              </div>
-            ) : (
-              <EmptyScreen
-                Icon={emptyIcon[variant || "other"]}
-                headline={t("no_category_apps", {
-                  category: (variant && t(variant).toLowerCase()) || t("other").toLowerCase(),
-                })}
-                description={t(`no_category_apps_description_${variant || "other"}`)}
-                buttonRaw={
-                  <Button
-                    color="secondary"
-                    data-testid={`connect-${variant || "other"}-apps`}
-                    href={variant ? `/apps/categories/${variant}` : "/apps/categories/other"}>
-                    {t(`connect_${variant || "other"}_apps`)}
-                  </Button>
-                }
-              />
-            )}
-          </>
+          <div className="border-subtle rounded-md border p-7">
+            <ShellSubHeading
+              title={t(variant || "other")}
+              subtitle={t(`installed_app_${variant || "other"}_description`)}
+              className="mb-6"
+              actions={
+                <Button
+                  href={variant ? `/apps/categories/${variant}` : "/apps"}
+                  color="secondary"
+                  StartIcon={Plus}>
+                  {t("add")}
+                </Button>
+              }
+            />
+
+            <AppList handleDisconnect={handleDisconnect} data={data} variant={variant} />
+          </div>
         );
       }}
     />
@@ -200,31 +112,64 @@ const IntegrationsContainer = ({ variant, exclude }: IntegrationsContainerProps)
 };
 
 const querySchema = z.object({
-  category: z.enum(InstalledAppVariants),
+  category: z.nativeEnum(AppCategories),
 });
 
 type querySchemaType = z.infer<typeof querySchema>;
 
+type ModalState = {
+  isOpen: boolean;
+  credentialId: null | number;
+  teamId?: number;
+};
+
 export default function InstalledApps() {
+  const searchParams = useCompatSearchParams();
   const { t } = useLocale();
-  const router = useRouter();
-  const category = router.query.category as querySchemaType["category"];
-  const categoryList: querySchemaType["category"][] = [
-    "payment",
-    "conferencing",
-    "automation",
-    "analytics",
-    "web3",
-  ];
+  const category = searchParams?.get("category") as querySchemaType["category"];
+  const categoryList: AppCategories[] = Object.values(AppCategories).filter((category) => {
+    // Exclude calendar and other from categoryList, we handle those slightly differently below
+    return !(category in { other: null, calendar: null });
+  });
+
+  const [data, updateData] = useReducer(
+    (data: ModalState, partialData: Partial<ModalState>) => ({ ...data, ...partialData }),
+    {
+      isOpen: false,
+      credentialId: null,
+    }
+  );
+
+  const handleModelClose = () => {
+    updateData({ isOpen: false, credentialId: null });
+  };
+
+  const handleDisconnect = (credentialId: number, teamId?: number) => {
+    updateData({ isOpen: true, credentialId, teamId });
+  };
 
   return (
-    <InstalledAppsLayout heading={t("installed_apps")} subtitle={t("manage_your_connected_apps")}>
-      {categoryList.includes(category) && <IntegrationsContainer variant={category} />}
-      {category === "calendar" && <CalendarListContainer />}
-      {category === "other" && (
-        <IntegrationsContainer variant={category} exclude={[...categoryList, "calendar"]} />
-      )}
-    </InstalledAppsLayout>
+    <>
+      <InstalledAppsLayout heading={t("installed_apps")} subtitle={t("manage_your_connected_apps")}>
+        {categoryList.includes(category) && (
+          <IntegrationsContainer handleDisconnect={handleDisconnect} variant={category} />
+        )}
+        {category === "calendar" && <CalendarListContainer />}
+        {category === "other" && (
+          <IntegrationsContainer
+            handleDisconnect={handleDisconnect}
+            variant={category}
+            exclude={[...categoryList, "calendar"]}
+          />
+        )}
+      </InstalledAppsLayout>
+      <DisconnectIntegrationModal
+        handleModelClose={handleModelClose}
+        isOpen={data.isOpen}
+        credentialId={data.credentialId}
+        teamId={data.teamId}
+      />
+    </>
   );
 }
 
@@ -254,3 +199,5 @@ export async function getServerSideProps(ctx: AppGetServerSidePropsContext) {
     },
   };
 }
+
+InstalledApps.PageWrapper = PageWrapper;

@@ -1,38 +1,24 @@
-import { GetServerSidePropsContext } from "next";
-import { useState } from "react";
+"use client";
 
+import { useReducer } from "react";
+
+import DisconnectIntegrationModal from "@calcom/features/apps/components/DisconnectIntegrationModal";
 import { getLayout } from "@calcom/features/settings/layouts/SettingsLayout";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Button,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  Dropdown,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownItem,
-  DropdownMenuTrigger,
-  Icon,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemTitle,
-  Meta,
-  showToast,
-  SkeletonContainer,
-  SkeletonText,
-} from "@calcom/ui";
+import { Button, EmptyScreen, Meta, SkeletonContainer, SkeletonText } from "@calcom/ui";
+import { Calendar, Plus } from "@calcom/ui/components/icon";
 
-import { ssrInit } from "@server/lib/ssr";
+import { QueryCell } from "@lib/QueryCell";
+
+import PageWrapper from "@components/PageWrapper";
+import { AppList } from "@components/apps/AppList";
 
 const SkeletonLoader = ({ title, description }: { title: string; description: string }) => {
   return (
     <SkeletonContainer>
-      <Meta title={title} description={description} />
-      <div className="mt-6 mb-8 space-y-6 divide-y">
+      <Meta title={title} description={description} borderInShellHeader={true} />
+      <div className="divide-subtle border-subtle space-y-6 rounded-b-lg border border-t-0 px-6 py-4">
         <SkeletonText className="h-8 w-full" />
         <SkeletonText className="h-8 w-full" />
       </div>
@@ -40,109 +26,101 @@ const SkeletonLoader = ({ title, description }: { title: string; description: st
   );
 };
 
-const ConferencingLayout = () => {
+const AddConferencingButton = () => {
   const { t } = useLocale();
-  const utils = trpc.useContext();
-
-  const { data: apps, isLoading } = trpc.viewer.integrations.useQuery(
-    { variant: "conferencing", onlyInstalled: true },
-    {
-      suspense: true,
-    }
-  );
-  const deleteAppMutation = trpc.viewer.deleteCredential.useMutation({
-    onSuccess: () => {
-      showToast("Integration deleted successfully", "success");
-      utils.viewer.integrations.invalidate({ variant: "conferencing", onlyInstalled: true });
-      setDeleteAppModal(false);
-    },
-    onError: () => {
-      showToast("Error deleting app", "error");
-      setDeleteAppModal(false);
-    },
-  });
-
-  const [deleteAppModal, setDeleteAppModal] = useState(false);
-  const [deleteCredentialId, setDeleteCredentialId] = useState<number>(0);
-
-  if (isLoading)
-    return <SkeletonLoader title={t("conferencing")} description={t("conferencing_description")} />;
 
   return (
-    <div className="w-full bg-white sm:mx-0 xl:mt-0">
-      <Meta title={t("conferencing")} description={t("conferencing_description")} />
-      <List>
-        {apps?.items &&
-          apps.items
-            .map((app) => ({ ...app, title: app.title || app.name }))
-            .map((app) => (
-              <ListItem className="flex-col border-0" key={app.title}>
-                <div className="flex w-full flex-1 items-center space-x-2 p-4 rtl:space-x-reverse">
-                  {
-                    // eslint-disable-next-line @next/next/no-img-element
-                    app.logo && <img className="h-10 w-10" src={app.logo} alt={app.title} />
-                  }
-                  <div className="flex-grow truncate pl-2">
-                    <ListItemTitle component="h3" className="mb-1 space-x-2 rtl:space-x-reverse">
-                      <h3 className="truncate text-sm font-medium text-gray-900">{app.title}</h3>
-                    </ListItemTitle>
-                    <ListItemText component="p">{app.description}</ListItemText>
-                  </div>
-                  <div>
-                    <Dropdown>
-                      <DropdownMenuTrigger asChild>
-                        <Button StartIcon={Icon.FiMoreHorizontal} size="icon" color="secondary" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent>
-                        <DropdownMenuItem>
-                          <DropdownItem
-                            type="button"
-                            color="destructive"
-                            disabled={app.isGlobal}
-                            StartIcon={Icon.FiTrash}
-                            onClick={() => {
-                              setDeleteCredentialId(app.credentialIds[0]);
-                              setDeleteAppModal(true);
-                            }}>
-                            {t("remove_app")}
-                          </DropdownItem>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </Dropdown>
-                  </div>
-                </div>
-              </ListItem>
-            ))}
-      </List>
+    <Button color="secondary" StartIcon={Plus} href="/apps/categories/conferencing">
+      {t("add")}
+    </Button>
+  );
+};
 
-      <Dialog open={deleteAppModal} onOpenChange={setDeleteAppModal}>
-        <DialogContent
-          title={t("Remove app")}
-          description={t("are_you_sure_you_want_to_remove_this_app")}
-          type="confirmation"
-          Icon={Icon.FiAlertCircle}>
-          <DialogFooter>
-            <Button color="primary" onClick={() => deleteAppMutation.mutate({ id: deleteCredentialId })}>
-              {t("yes_remove_app")}
-            </Button>
-            <DialogClose />
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+type ModalState = {
+  isOpen: boolean;
+  credentialId: null | number;
+};
+
+const ConferencingLayout = () => {
+  const { t } = useLocale();
+
+  const [modal, updateModal] = useReducer(
+    (data: ModalState, partialData: Partial<ModalState>) => ({ ...data, ...partialData }),
+    {
+      isOpen: false,
+      credentialId: null,
+    }
+  );
+
+  const query = trpc.viewer.integrations.useQuery({
+    variant: "conferencing",
+    onlyInstalled: true,
+  });
+
+  const handleModelClose = () => {
+    updateModal({ isOpen: false, credentialId: null });
+  };
+
+  const handleDisconnect = (credentialId: number) => {
+    updateModal({ isOpen: true, credentialId });
+  };
+
+  return (
+    <>
+      <div className="bg-default w-full sm:mx-0 xl:mt-0">
+        <Meta
+          title={t("conferencing")}
+          description={t("conferencing_description")}
+          CTA={<AddConferencingButton />}
+          borderInShellHeader={true}
+        />
+        <QueryCell
+          query={query}
+          customLoader={
+            <SkeletonLoader title={t("conferencing")} description={t("conferencing_description")} />
+          }
+          success={({ data }) => {
+            console.log(data);
+            if (!data.items.length) {
+              return (
+                <EmptyScreen
+                  Icon={Calendar}
+                  headline={t("no_category_apps", {
+                    category: t("conferencing").toLowerCase(),
+                  })}
+                  description={t("no_category_apps_description_conferencing")}
+                  buttonRaw={
+                    <Button
+                      color="secondary"
+                      data-testid="connect-conferencing-apps"
+                      href="/apps/categories/conferencing">
+                      {t("connect_conference_apps")}
+                    </Button>
+                  }
+                />
+              );
+            }
+            return (
+              <AppList
+                listClassName="rounded-lg rounded-t-none border-t-0"
+                handleDisconnect={handleDisconnect}
+                data={data}
+                variant="conferencing"
+              />
+            );
+          }}
+        />
+      </div>
+      <DisconnectIntegrationModal
+        handleModelClose={handleModelClose}
+        isOpen={modal.isOpen}
+        credentialId={modal.credentialId}
+      />
+    </>
   );
 };
 
 ConferencingLayout.getLayout = getLayout;
-
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const ssr = await ssrInit(context);
-
-  return {
-    props: {
-      trpcState: ssr.dehydrate(),
-    },
-  };
-};
+ConferencingLayout.PageWrapper = PageWrapper;
 
 export default ConferencingLayout;

@@ -1,12 +1,13 @@
-import { createEvent, DateArray } from "ics";
-import { TFunction } from "next-i18next";
-import { RRule } from "rrule";
+// eslint-disable-next-line no-restricted-imports
+import { cloneDeep } from "lodash";
+import type { TFunction } from "next-i18next";
 
-import dayjs from "@calcom/dayjs";
 import { getRichDescription } from "@calcom/lib/CalEventParser";
+import { TimeFormat } from "@calcom/lib/timeFormat";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
 
 import { renderEmail } from "../";
+import generateIcsString from "../lib/generateIcsString";
 import BaseEmail from "./_base-email";
 
 export default class AttendeeScheduledEmail extends BaseEmail {
@@ -17,65 +18,40 @@ export default class AttendeeScheduledEmail extends BaseEmail {
 
   constructor(calEvent: CalendarEvent, attendee: Person, showAttendees?: boolean | undefined) {
     super();
+    if (!showAttendees && calEvent.seatsPerTimeSlot) {
+      this.calEvent = cloneDeep(calEvent);
+      this.calEvent.attendees = [attendee];
+    } else {
+      this.calEvent = calEvent;
+    }
     this.name = "SEND_BOOKING_CONFIRMATION";
-    this.calEvent = calEvent;
     this.attendee = attendee;
-    this.showAttendees = showAttendees;
     this.t = attendee.language.translate;
-
-    if (!this.showAttendees) {
-      this.calEvent.attendees = [
-        {
-          ...this.attendee,
-        },
-      ];
-    }
   }
 
-  protected getiCalEventAsString(): string | undefined {
-    // Taking care of recurrence rule
-    let recurrenceRule: string | undefined = undefined;
-    if (this.calEvent.recurringEvent?.count) {
-      // ics appends "RRULE:" already, so removing it from RRule generated string
-      recurrenceRule = new RRule(this.calEvent.recurringEvent).toString().replace("RRULE:", "");
-    }
-    const icsEvent = createEvent({
-      start: dayjs(this.calEvent.startTime)
-        .utc()
-        .toArray()
-        .slice(0, 6)
-        .map((v, i) => (i === 1 ? v + 1 : v)) as DateArray,
-      startInputType: "utc",
-      productId: "calendso/ics",
-      title: this.calEvent.title,
-      description: this.getTextBody(),
-      duration: { minutes: dayjs(this.calEvent.endTime).diff(dayjs(this.calEvent.startTime), "minute") },
-      organizer: { name: this.calEvent.organizer.name, email: this.calEvent.organizer.email },
-      attendees: this.calEvent.attendees.map((attendee: Person) => ({
-        name: attendee.name,
-        email: attendee.email,
-      })),
-      ...{ recurrenceRule },
-      status: "CONFIRMED",
-    });
-    if (icsEvent.error) {
-      throw icsEvent.error;
-    }
-    return icsEvent.value;
-  }
+  protected async getNodeMailerPayload(): Promise<Record<string, unknown>> {
+    const clonedCalEvent = cloneDeep(this.calEvent);
 
-  protected getNodeMailerPayload(): Record<string, unknown> {
     return {
       icalEvent: {
         filename: "event.ics",
-        content: this.getiCalEventAsString(),
+        content: generateIcsString({
+          event: this.calEvent,
+          title: this.calEvent.recurringEvent?.count
+            ? this.t("your_event_has_been_scheduled_recurring")
+            : this.t("your_event_has_been_scheduled"),
+          role: "attendee",
+          subtitle: "emailed_you_and_any_other_attendees",
+          status: "CONFIRMED",
+        }),
+        method: "REQUEST",
       },
       to: `${this.attendee.name} <${this.attendee.email}>`,
       from: `${this.calEvent.organizer.name} <${this.getMailerOptions().from}>`,
       replyTo: [...this.calEvent.attendees.map(({ email }) => email), this.calEvent.organizer.email],
       subject: `${this.calEvent.title}`,
-      html: renderEmail("AttendeeScheduledEmail", {
-        calEvent: this.calEvent,
+      html: await renderEmail("AttendeeScheduledEmail", {
+        calEvent: clonedCalEvent,
         attendee: this.attendee,
       }),
       text: this.getTextBody(),
@@ -91,7 +67,7 @@ ${this.t(
 )}
 ${this.t(subtitle)}
 
-${getRichDescription(this.calEvent)}
+${getRichDescription(this.calEvent, this.t)}
 `.trim();
   }
 
@@ -101,16 +77,28 @@ ${getRichDescription(this.calEvent)}
     return this.calEvent.attendees[0].timeZone;
   }
 
+  protected getLocale(): string {
+    return this.calEvent.attendees[0].language.locale;
+  }
+
   protected getInviteeStart(format: string) {
-    return this.getRecipientTime(this.calEvent.startTime, format);
+    return this.getFormattedRecipientTime({
+      time: this.calEvent.startTime,
+      format,
+    });
   }
 
   protected getInviteeEnd(format: string) {
-    return this.getRecipientTime(this.calEvent.endTime, format);
+    return this.getFormattedRecipientTime({
+      time: this.calEvent.endTime,
+      format,
+    });
   }
 
-  protected getFormattedDate() {
-    return `${this.getInviteeStart("h:mma")} - ${this.getInviteeEnd("h:mma")}, ${this.t(
+  public getFormattedDate() {
+    const inviteeTimeFormat = this.calEvent.organizer.timeFormat || TimeFormat.TWELVE_HOUR;
+
+    return `${this.getInviteeStart(inviteeTimeFormat)} - ${this.getInviteeEnd(inviteeTimeFormat)}, ${this.t(
       this.getInviteeStart("dddd").toLowerCase()
     )}, ${this.t(this.getInviteeStart("MMMM").toLowerCase())} ${this.getInviteeStart("D, YYYY")}`;
   }

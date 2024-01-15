@@ -1,46 +1,45 @@
 import { ErrorMessage } from "@hookform/error-message";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { isValidPhoneNumber } from "libphonenumber-js";
+import { Trans } from "next-i18next";
+import Link from "next/link";
 import { useEffect } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { components } from "react-select";
+import { Controller, useForm, useWatch, useFormContext } from "react-hook-form";
 import { z } from "zod";
 
+import type { EventLocationType, LocationObject } from "@calcom/app-store/locations";
 import {
-  EventLocationType,
   getEventLocationType,
   getHumanReadableLocationValue,
   getMessageForOrganizer,
-  LocationObject,
   LocationType,
+  OrganizerDefaultConferencingAppType,
 } from "@calcom/app-store/locations";
-import { classNames } from "@calcom/lib";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { RouterOutputs, trpc } from "@calcom/trpc/react";
-import { Button, Dialog, DialogClose, DialogContent, DialogFooter, Form, Icon, PhoneInput } from "@calcom/ui";
+import type { RouterOutputs } from "@calcom/trpc/react";
+import { trpc } from "@calcom/trpc/react";
+import { Input } from "@calcom/ui";
+import { Button, Dialog, DialogContent, DialogFooter, Form, PhoneInput } from "@calcom/ui";
+import { MapPin } from "@calcom/ui/components/icon";
 
 import { QueryCell } from "@lib/QueryCell";
 
 import CheckboxField from "@components/ui/form/CheckboxField";
-import Select from "@components/ui/form/Select";
+import type { LocationOption } from "@components/ui/form/LocationSelect";
+import LocationSelect from "@components/ui/form/LocationSelect";
 
 type BookingItem = RouterOutputs["viewer"]["bookings"]["get"]["bookings"][number];
 
-type OptionTypeBase = {
-  label: string;
-  value: EventLocationType["type"];
-  disabled?: boolean;
-};
-
 interface ISetLocationDialog {
   saveLocation: (newLocationType: EventLocationType["type"], details: { [key: string]: string }) => void;
-  selection?: OptionTypeBase;
+  selection?: LocationOption;
   booking?: BookingItem;
   defaultValues?: LocationObject[];
   setShowLocationModal: React.Dispatch<React.SetStateAction<boolean>>;
   isOpenDialog: boolean;
-  setSelectedLocation?: (param: OptionTypeBase | undefined) => void;
+  setSelectedLocation?: (param: LocationOption | undefined) => void;
   setEditingLocationType?: (param: string) => void;
+  teamId?: number;
 }
 
 const LocationInput = (props: {
@@ -53,16 +52,22 @@ const LocationInput = (props: {
   defaultValue?: string;
 }): JSX.Element | null => {
   const { eventLocationType, locationFormMethods, ...remainingProps } = props;
+  const { control } = useFormContext() as typeof locationFormMethods;
   if (eventLocationType?.organizerInputType === "text") {
     return (
-      <input {...locationFormMethods.register(eventLocationType.variable)} type="text" {...remainingProps} />
+      <Input {...locationFormMethods.register(eventLocationType.variable)} type="text" {...remainingProps} />
     );
   } else if (eventLocationType?.organizerInputType === "phone") {
+    const { defaultValue, ...rest } = remainingProps;
+
     return (
-      <PhoneInput
+      <Controller
         name={eventLocationType.variable}
-        control={locationFormMethods.control}
-        {...remainingProps}
+        control={control}
+        defaultValue={defaultValue}
+        render={({ field: { onChange, value } }) => {
+          return <PhoneInput onChange={onChange} value={value} {...rest} />;
+        }}
       />
     );
   }
@@ -79,13 +84,17 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
     defaultValues,
     setSelectedLocation,
     setEditingLocationType,
+    teamId,
   } = props;
   const { t } = useLocale();
-  const locationsQuery = trpc.viewer.locationOptions.useQuery();
+  const locationsQuery = trpc.viewer.locationOptions.useQuery({ teamId });
 
   useEffect(() => {
     if (selection) {
       locationFormMethods.setValue("locationType", selection?.value);
+      if (selection?.address) {
+        locationFormMethods.setValue("locationAddress", selection?.address);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection]);
@@ -94,6 +103,8 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
     locationType: z.string(),
     phone: z.string().optional().nullable(),
     locationAddress: z.string().optional(),
+    credentialId: z.number().optional(),
+    teamName: z.string().optional(),
     locationLink: z
       .string()
       .optional()
@@ -110,7 +121,7 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: `Invalid URL for ${eventLocationType.label}. ${
-                sampleUrl ? "Sample URL: " + sampleUrl : ""
+                sampleUrl ? `Sample URL: ${sampleUrl}` : ""
               }`,
             });
           }
@@ -147,10 +158,21 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
     name: "locationType",
   });
 
+  const selectedAddrValue = useWatch({
+    control: locationFormMethods.control,
+    name: "locationAddress",
+  });
+
   const eventLocationType = getEventLocationType(selectedLocation);
 
   const defaultLocation = defaultValues?.find(
-    (location: { type: EventLocationType["type"] }) => location.type === eventLocationType?.type
+    (location: { type: EventLocationType["type"]; address?: string }) => {
+      if (location.type === LocationType.InPerson) {
+        return location.type === eventLocationType?.type && location.address === selectedAddrValue;
+      } else {
+        return location.type === eventLocationType?.type;
+      }
+    }
   );
 
   const LocationOptions = (() => {
@@ -162,7 +184,7 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
 
       return (
         <div>
-          <label htmlFor="locationInput" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="locationInput" className="text-default block text-sm font-medium">
             {t(eventLocationType.messageForOrganizer || "")}
           </label>
           <div className="mt-1">
@@ -172,7 +194,6 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
               id="locationInput"
               placeholder={t(eventLocationType.organizerInputPlaceholder || "")}
               required
-              className="block w-full rounded-sm border-gray-300 text-sm"
               // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
               defaultValue={
                 defaultLocation ? defaultLocation[eventLocationType.defaultValueVariable] : undefined
@@ -181,7 +202,7 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
             <ErrorMessage
               errors={locationFormMethods.formState.errors}
               name={eventLocationType.variable}
-              className="mt-1 text-sm text-red-500"
+              className="text-error mt-1 text-sm"
               as="p"
             />
           </div>
@@ -192,6 +213,7 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
                 control={locationFormMethods.control}
                 render={() => (
                   <CheckboxField
+                    data-testid="display-location"
                     defaultChecked={defaultLocation?.displayLocationPublicly}
                     description={t("display_location_label")}
                     onChange={(e) =>
@@ -206,32 +228,40 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
         </div>
       );
     } else {
-      return <p className="text-sm">{getMessageForOrganizer(selectedLocation, t)}</p>;
+      return <p className="text-default text-sm">{getMessageForOrganizer(selectedLocation, t)}</p>;
     }
   })();
 
   return (
-    <Dialog open={isOpenDialog}>
+    <Dialog open={isOpenDialog} onOpenChange={(open) => setShowLocationModal(open)}>
       <DialogContent>
         <div className="flex flex-row space-x-3">
-          <div className="bg-secondary-100 mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full sm:mx-0 sm:h-10 sm:w-10">
-            <Icon.FiMapPin className="text-primary-600 h-6 w-6" />
+          <div className="bg-subtle mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full sm:mx-0 sm:h-10 sm:w-10">
+            <MapPin className="text-emphasis h-6 w-6" />
           </div>
           <div className="w-full">
             <div className="mt-3 text-center sm:mt-0 sm:text-left">
-              <h3 className="text-lg font-medium leading-6 text-gray-900" id="modal-title">
+              <h3 className="text-emphasis text-lg font-medium leading-6" id="modal-title">
                 {t("edit_location")}
               </h3>
               {!booking && (
-                <p className="text-sm text-gray-400">{t("this_input_will_shown_booking_this_event")}</p>
+                <p className="text-default text-sm">
+                  <Trans i18nKey="cant_find_the_right_video_app_visit_our_app_store">
+                    Can&apos;t find the right video app? Visit our
+                    <Link className="cursor-pointer text-blue-500 underline" href="/apps/categories/video">
+                      App Store
+                    </Link>
+                    .
+                  </Trans>
+                </p>
               )}
             </div>
             <div className="mt-3 text-center sm:mt-0 sm:text-left" />
 
             {booking && (
               <>
-                <p className="mt-6 mb-2 ml-1 text-sm font-bold text-black">{t("current_location")}:</p>
-                <p className="mb-2 ml-1 text-sm text-black">
+                <p className="text-emphasis mb-2 ml-1 mt-6 text-sm font-bold">{t("current_location")}:</p>
+                <p className="text-emphasis mb-2 ml-1 text-sm">
                   {getHumanReadableLocationValue(booking.location, t)}
                 </p>
               </>
@@ -268,6 +298,20 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
                   };
                 }
 
+                if (values.credentialId) {
+                  details = {
+                    ...details,
+                    credentialId: values.credentialId,
+                  };
+                }
+
+                if (values.teamName) {
+                  details = {
+                    ...details,
+                    teamName: values.teamName,
+                  };
+                }
+
                 saveLocation(newLocation, details);
                 setShowLocationModal(false);
                 setSelectedLocation?.(undefined);
@@ -280,95 +324,80 @@ export const EditLocationDialog = (props: ISetLocationDialog) => {
               }}>
               <QueryCell
                 query={locationsQuery}
-                success={({ data: locationOptions }) => {
-                  if (!locationOptions.length) return null;
+                success={({ data }) => {
+                  if (!data.length) return null;
+                  const locationOptions = [...data].map((option) => {
+                    if (teamId) {
+                      // Let host's Default conferencing App option show for Team Event
+                      return option;
+                    }
+                    return {
+                      ...option,
+                      options: option.options.filter((o) => o.value !== OrganizerDefaultConferencingAppType),
+                    };
+                  });
                   if (booking) {
-                    locationOptions.forEach((location) => {
-                      if (location.label === "phone") {
-                        location.options.filter((l) => l.value !== "phone");
-                      } else if (location.label === "in person") {
-                        location.options.filter((l) => l.value !== "attendeeInPerson");
-                      }
-                    });
+                    locationOptions.map((location) =>
+                      location.options.filter((l) => !["phone", "attendeeInPerson"].includes(l.value))
+                    );
                   }
                   return (
                     <Controller
                       name="locationType"
                       control={locationFormMethods.control}
                       render={() => (
-                        <Select<{ label: string; value: string; icon?: string }>
-                          maxMenuHeight={300}
-                          name="location"
-                          defaultValue={selection}
-                          options={locationOptions}
-                          components={{
-                            Option: (props) => (
-                              <components.Option {...props}>
-                                <div className="flex items-center gap-3">
-                                  {props.data.icon && (
-                                    <img src={props.data.icon} alt="cover" className="h-3.5 w-3.5" />
-                                  )}
-                                  <span
-                                    className={classNames(
-                                      "text-sm font-medium",
-                                      props.isSelected ? "text-white" : "text-gray-900"
-                                    )}>
-                                    {props.data.label}
-                                  </span>
-                                </div>
-                              </components.Option>
-                            ),
-                          }}
-                          formatOptionLabel={(e) => (
-                            <div className="flex items-center gap-3">
-                              {e.icon && <img src={e.icon} alt="app-icon" className="h-5 w-5" />}
-                              <span>{e.label}</span>
-                            </div>
-                          )}
-                          formatGroupLabel={(e) => (
-                            <p className="text-xs font-medium text-gray-600">{e.label}</p>
-                          )}
-                          isSearchable
-                          className="my-4 block w-full min-w-0 flex-1 rounded-sm border border-gray-300 text-sm"
-                          onChange={(val) => {
-                            if (val) {
-                              locationFormMethods.setValue("locationType", val.value);
-                              locationFormMethods.unregister([
-                                "locationLink",
-                                "locationAddress",
-                                "locationPhoneNumber",
-                              ]);
-                              locationFormMethods.clearErrors([
-                                "locationLink",
-                                "locationPhoneNumber",
-                                "locationAddress",
-                              ]);
-                              setSelectedLocation?.(val);
-                            }
-                          }}
-                        />
+                        <div className="py-4">
+                          <LocationSelect
+                            maxMenuHeight={300}
+                            name="location"
+                            defaultValue={selection}
+                            options={locationOptions}
+                            isSearchable
+                            onChange={(val) => {
+                              if (val) {
+                                locationFormMethods.setValue("locationType", val.value);
+                                if (!!val.credentialId) {
+                                  locationFormMethods.setValue("credentialId", val.credentialId);
+                                  locationFormMethods.setValue("teamName", val.teamName);
+                                }
+
+                                locationFormMethods.unregister([
+                                  "locationLink",
+                                  "locationAddress",
+                                  "locationPhoneNumber",
+                                ]);
+                                locationFormMethods.clearErrors([
+                                  "locationLink",
+                                  "locationPhoneNumber",
+                                  "locationAddress",
+                                ]);
+                                setSelectedLocation?.(val);
+                              }
+                            }}
+                          />
+                        </div>
                       )}
                     />
                   );
                 }}
               />
               {selectedLocation && LocationOptions}
-              <DialogFooter>
-                <div className="mt-4 flex justify-end space-x-2 rtl:space-x-reverse">
-                  <Button
-                    onClick={() => {
-                      setShowLocationModal(false);
-                      setSelectedLocation?.(undefined);
-                      setEditingLocationType?.("");
-                      locationFormMethods.unregister("locationType");
-                    }}
-                    type="button"
-                    color="secondary">
-                    {t("cancel")}
-                  </Button>
+              <DialogFooter className="relative">
+                <Button
+                  onClick={() => {
+                    setShowLocationModal(false);
+                    setSelectedLocation?.(undefined);
+                    setEditingLocationType?.("");
+                    locationFormMethods.unregister(["locationType", "locationLink"]);
+                  }}
+                  type="button"
+                  color="secondary">
+                  {t("cancel")}
+                </Button>
 
-                  <Button type="submit">{t("update")}</Button>
-                </div>
+                <Button data-testid="update-location" type="submit">
+                  {t("update")}
+                </Button>
               </DialogFooter>
             </Form>
           </div>

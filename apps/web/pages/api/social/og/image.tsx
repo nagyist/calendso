@@ -1,5 +1,5 @@
 import { ImageResponse } from "@vercel/og";
-import { NextApiRequest } from "next";
+import type { NextApiRequest } from "next";
 import type { SatoriOptions } from "satori";
 import { z } from "zod";
 
@@ -18,7 +18,7 @@ const interFontMedium = fetch(new URL("../../../../public/fonts/Inter-Medium.ttf
 );
 
 export const config = {
-  runtime: "experimental-edge",
+  runtime: "edge",
 };
 
 const meetingSchema = z.object({
@@ -73,6 +73,7 @@ export default async function handler(req: NextApiRequest) {
         meetingImage: searchParams.get("meetingImage"),
         imageType,
       });
+
       const img = new ImageResponse(
         (
           <Meeting
@@ -84,7 +85,7 @@ export default async function handler(req: NextApiRequest) {
         ogConfig
       ) as { body: Buffer };
 
-      return new Response(img.body, { status: 200 });
+      return new Response(img.body, { status: 200, headers: { "Content-Type": "image/png" } });
     }
     case "app": {
       const { name, description, slug } = appSchema.parse({
@@ -97,7 +98,7 @@ export default async function handler(req: NextApiRequest) {
         body: Buffer;
       };
 
-      return new Response(img.body, { status: 200 });
+      return new Response(img.body, { status: 200, headers: { "Content-Type": "image/png" } });
     }
 
     case "generic": {
@@ -111,7 +112,7 @@ export default async function handler(req: NextApiRequest) {
         body: Buffer;
       };
 
-      return new Response(img.body, { status: 200 });
+      return new Response(img.body, { status: 200, headers: { "Content-Type": "image/png" } });
     }
 
     default:

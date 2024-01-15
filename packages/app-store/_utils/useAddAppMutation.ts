@@ -1,8 +1,9 @@
-import { useMutation, UseMutationOptions } from "@tanstack/react-query";
+import type { UseMutationOptions } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 
 import type { IntegrationOAuthCallbackState } from "@calcom/app-store/types";
 import { WEBAPP_URL } from "@calcom/lib/constants";
-import { App } from "@calcom/types/App";
+import type { App } from "@calcom/types/App";
 
 import getInstalledAppPath from "./getInstalledAppPath";
 
@@ -30,10 +31,11 @@ function useAddAppMutation(_type: App["type"] | null, allOptions?: UseAddAppMuta
   const mutation = useMutation<
     AddAppMutationData,
     Error,
-    { type?: App["type"]; variant?: string; slug?: string; isOmniInstall?: boolean } | ""
+    { type?: App["type"]; variant?: string; slug?: string; isOmniInstall?: boolean; teamId?: number } | ""
   >(async (variables) => {
     let type: string | null | undefined;
     let isOmniInstall;
+    const teamId = variables && variables.teamId ? variables.teamId : undefined;
     if (variables === "") {
       type = _type;
     } else {
@@ -56,11 +58,13 @@ function useAddAppMutation(_type: App["type"] | null, allOptions?: UseAddAppMuta
             location.search
           ),
       ...(type === "google_calendar" && { installGoogleVideo: options?.installGoogleVideo }),
+      ...(teamId && { teamId }),
     };
-    const stateStr = encodeURIComponent(JSON.stringify(state));
-    const searchParams = `?state=${stateStr}`;
 
-    const res = await fetch(`/api/integrations/${type}/add` + searchParams);
+    const stateStr = encodeURIComponent(JSON.stringify(state));
+    const searchParams = `?state=${stateStr}${teamId ? `&teamId=${teamId}` : ""}`;
+
+    const res = await fetch(`/api/integrations/${type}/add${searchParams}`);
 
     if (!res.ok) {
       const errorBody = await res.json();
@@ -69,10 +73,9 @@ function useAddAppMutation(_type: App["type"] | null, allOptions?: UseAddAppMuta
 
     const json = await res.json();
     const externalUrl = /https?:\/\//.test(json.url) && !json.url.startsWith(window.location.origin);
-
     if (!isOmniInstall) {
       gotoUrl(json.url, json.newTab);
-      return;
+      return { setupPending: externalUrl || json.url.endsWith("/setup") };
     }
 
     // Skip redirection only if it is an OmniInstall and redirect URL isn't of some other origin
@@ -82,7 +85,7 @@ function useAddAppMutation(_type: App["type"] | null, allOptions?: UseAddAppMuta
     if (externalUrl) {
       // TODO: For Omni installation to authenticate and come back to the page where installation was initiated, some changes need to be done in all apps' add callbacks
       gotoUrl(json.url, json.newTab);
-      return;
+      return { setupPending: externalUrl };
     }
 
     return { setupPending: externalUrl || json.url.endsWith("/setup") };

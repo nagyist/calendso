@@ -22,11 +22,10 @@ test.describe("Change username on settings", () => {
     await users.deleteAll();
   });
 
-  /** TODO: Find out why it's timing out */
-  test.fixme("User can change username", async ({ page, users, prisma }) => {
+  test("User can change username", async ({ page, users, prisma }) => {
     const user = await users.create();
 
-    await user.login();
+    await user.apiLogin();
     // Try to go homepage
     await page.goto("/settings/my-account/profile");
     // Change username from normal to normal
@@ -36,7 +35,7 @@ test.describe("Change username on settings", () => {
     await page.click("[data-testid=update-username-btn]");
     await Promise.all([
       page.click("[data-testid=save-username]"),
-      page.waitForResponse("**/viewer.updateProfile*"),
+      page.getByTestId("toast-success").waitFor(),
     ]);
 
     const newUpdatedUser = await prisma.user.findUniqueOrThrow({
@@ -44,18 +43,50 @@ test.describe("Change username on settings", () => {
         id: user.id,
       },
     });
+
     expect(newUpdatedUser.username).toBe("demousernamex");
+  });
+
+  test("User can change username to include periods(or dots)", async ({ page, users, prisma }) => {
+    const user = await users.create();
+
+    await user.apiLogin();
+    // Try to go homepage
+    await page.goto("/settings/my-account/profile");
+    // Change username from normal to normal
+    const usernameInput = page.locator("[data-testid=username-input]");
+    // User can change username to include dots(or periods)
+    await usernameInput.fill("demo.username");
+    await page.click("[data-testid=update-username-btn]");
+    await Promise.all([
+      page.click("[data-testid=save-username]"),
+      page.getByTestId("toast-success").waitFor(),
+    ]);
+    await page.waitForLoadState("networkidle");
+
+    const updatedUser = await prisma.user.findUniqueOrThrow({
+      where: {
+        id: user.id,
+      },
+    });
+
+    expect(updatedUser.username).toBe("demo.username");
+
+    // Check if user avatar can be accessed and response headers contain 'image/' in the content type
+    const response = await page.goto("/demo.username/avatar.png");
+    expect(response?.headers()?.["content-type"]).toContain("image/");
   });
 
   test("User can update to PREMIUM username", async ({ page, users }, testInfo) => {
     // eslint-disable-next-line playwright/no-skipped-test
     test.skip(!IS_STRIPE_ENABLED, "It should only run if Stripe is installed");
+    // eslint-disable-next-line playwright/no-skipped-test
     test.skip(IS_SELF_HOSTED, "It shouldn't run on self hosted");
 
     const user = await users.create();
     await stripe.customers.create({ email: `${user?.username}@example.com` });
 
-    await user.login();
+    await user.apiLogin();
     await page.goto("/settings/my-account/profile");
 
     // Change username from normal to premium

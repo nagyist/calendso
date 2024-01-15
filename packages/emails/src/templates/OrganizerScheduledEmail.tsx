@@ -7,6 +7,8 @@ export const OrganizerScheduledEmail = (
     calEvent: CalendarEvent;
     attendee: Person;
     newSeat?: boolean;
+    attendeeCancelled?: boolean;
+    teamMember?: Person;
   } & Partial<React.ComponentProps<typeof BaseScheduledEmail>>
 ) => {
   let subject;
@@ -26,14 +28,26 @@ export const OrganizerScheduledEmail = (
     title = "new_event_scheduled";
   }
 
-  const t = props.calEvent.organizer.language.translate;
+  const t = props.teamMember?.language.translate || props.calEvent.organizer.language.translate;
+  const locale = props.teamMember?.language.locale || props.calEvent.organizer.language.locale;
+  const timeFormat = props.teamMember?.timeFormat || props.calEvent.organizer?.timeFormat;
+
   return (
     <BaseScheduledEmail
-      timeZone={props.calEvent.organizer.timeZone}
+      locale={locale}
+      timeZone={props.teamMember?.timeZone || props.calEvent.organizer.timeZone}
       t={t}
       subject={t(subject)}
       title={t(title)}
       includeAppsStatus
+      timeFormat={timeFormat}
+      subtitle={
+        <>
+          {props.attendeeCancelled
+            ? t("attendee_no_longer_attending_subtitle", { name: props.attendee.name })
+            : ""}
+        </>
+      }
       {...props}
     />
   );

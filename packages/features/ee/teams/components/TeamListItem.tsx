@@ -1,13 +1,20 @@
-import { MembershipRole } from "@prisma/client";
 import Link from "next/link";
-import { useRouter } from "next/router";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
+import InviteLinkSettingsModal from "@calcom/ee/teams/components/InviteLinkSettingsModal";
+import MemberInvitationModal from "@calcom/ee/teams/components/MemberInvitationModal";
 import classNames from "@calcom/lib/classNames";
-import { getPlaceholderAvatar } from "@calcom/lib/getPlaceholderAvatar";
+import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
+import { getTeamUrlSync } from "@calcom/lib/getBookerUrl/client";
+import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { RouterOutputs, trpc } from "@calcom/trpc/react";
+import { MembershipRole } from "@calcom/prisma/enums";
+import type { RouterOutputs } from "@calcom/trpc/react";
+import { trpc } from "@calcom/trpc/react";
 import {
   Avatar,
+  Badge,
   Button,
   ButtonGroup,
   ConfirmationDialogContent,
@@ -19,11 +26,23 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Icon,
   showToast,
   Tooltip,
 } from "@calcom/ui";
+import {
+  Check,
+  Edit2,
+  ExternalLink,
+  Globe,
+  Link as LinkIcon,
+  LogOut,
+  MoreHorizontal,
+  Send,
+  Trash,
+  X,
+} from "@calcom/ui/components/icon";
 
+import { useOrgBranding } from "../../organizations/context/provider";
 import { TeamRole } from "./TeamPill";
 
 interface Props {
@@ -36,13 +55,25 @@ interface Props {
 }
 
 export default function TeamListItem(props: Props) {
-  const { t } = useLocale();
+  const searchParams = useCompatSearchParams();
+  const { t, i18n } = useLocale();
   const utils = trpc.useContext();
   const team = props.team;
 
+  const showDialog = searchParams?.get("inviteModal") === "true";
+  const [openMemberInvitationModal, setOpenMemberInvitationModal] = useState(showDialog);
+  const [openInviteLinkSettingsModal, setOpenInviteLinkSettingsModal] = useState(false);
+
+  const teamQuery = trpc.viewer.teams.get.useQuery({ teamId: team?.id });
+  const inviteMemberMutation = trpc.viewer.teams.inviteMember.useMutation();
+
   const acceptOrLeaveMutation = trpc.viewer.teams.acceptOrLeave.useMutation({
     onSuccess: () => {
+      showToast(t("success"), "success");
+      utils.viewer.teams.get.invalidate();
       utils.viewer.teams.list.invalidate();
+      utils.viewer.teams.hasTeamPlan.invalidate();
+      utils.viewer.teams.listInvites.invalidate();
     },
   });
 
@@ -55,6 +86,7 @@ export default function TeamListItem(props: Props) {
 
   const acceptInvite = () => acceptOrLeave(true);
   const declineInvite = () => acceptOrLeave(false);
+  const orgBranding = useOrgBranding();
 
   const isOwner = props.team.role === MembershipRole.OWNER;
   const isInvitee = !props.team.accepted;
@@ -64,50 +96,119 @@ export default function TeamListItem(props: Props) {
   if (!team) return <></>;
 
   const teamInfo = (
-    <div className="flex px-5 py-5">
+    <div className="item-center flex px-5 py-5">
       <Avatar
-        size="sm"
+        size="md"
         imageSrc={getPlaceholderAvatar(team?.logo, team?.name as string)}
         alt="Team Logo"
-        className="min-h-9 min-w-9 h-9 w-9 rounded-full"
+        className="inline-flex justify-center"
       />
-      <div className="inline-block ltr:ml-3 rtl:mr-3">
-        <span className="text-sm font-bold text-gray-700">{team.name}</span>
-        <span className="block text-xs text-gray-400">
-          {team.slug ? `${process.env.NEXT_PUBLIC_WEBSITE_URL}/team/${team.slug}` : "Unpublished team"}
+      <div className="ms-3 inline-block truncate">
+        <span className="text-default text-sm font-bold">{team.name}</span>
+        <span className="text-muted block text-xs">
+          {team.slug ? (
+            `${getTeamUrlSync({ orgSlug: team.parent ? team.parent.slug : null, teamSlug: team.slug })}`
+          ) : (
+            <Badge>{t("upgrade")}</Badge>
+          )}
         </span>
       </div>
     </div>
   );
 
   return (
-    <li className="divide-y">
-      <div
-        className={classNames(
-          "flex items-center  justify-between",
-          !isInvitee && "group hover:bg-neutral-50"
-        )}>
+    <li className="">
+      <MemberInvitationModal
+        isOpen={openMemberInvitationModal}
+        teamId={team.id}
+        token={team.inviteToken?.token}
+        onExit={() => {
+          setOpenMemberInvitationModal(false);
+        }}
+        isLoading={inviteMemberMutation.isLoading}
+        onSubmit={(values, resetFields) => {
+          inviteMemberMutation.mutate(
+            {
+              teamId: team.id,
+              language: i18n.language,
+              role: values.role,
+              usernameOrEmail: values.emailOrUsername,
+            },
+            {
+              onSuccess: async (data) => {
+                await utils.viewer.teams.get.invalidate();
+                setOpenMemberInvitationModal(false);
+
+                if (Array.isArray(data.usernameOrEmail)) {
+                  showToast(
+                    t("email_invite_team_bulk", {
+                      userCount: data.usernameOrEmail.length,
+                    }),
+                    "success"
+                  );
+                  resetFields();
+                } else {
+                  showToast(
+                    t("email_invite_team", {
+                      email: data.usernameOrEmail,
+                    }),
+                    "success"
+                  );
+                }
+              },
+              onError: (error) => {
+                showToast(error.message, "error");
+              },
+            }
+          );
+        }}
+        onSettingsOpen={() => {
+          setOpenMemberInvitationModal(false);
+          setOpenInviteLinkSettingsModal(true);
+        }}
+        members={teamQuery?.data?.members || []}
+      />
+      {team.inviteToken && (
+        <InviteLinkSettingsModal
+          isOpen={openInviteLinkSettingsModal}
+          teamId={team.id}
+          token={team.inviteToken?.token}
+          expiresInDays={team.inviteToken?.expiresInDays || undefined}
+          onExit={() => {
+            setOpenInviteLinkSettingsModal(false);
+            setOpenMemberInvitationModal(true);
+          }}
+        />
+      )}
+      <div className={classNames("flex items-center  justify-between", !isInvitee && "hover:bg-muted group")}>
         {!isInvitee ? (
-          <Link
-            href={"/settings/teams/" + team.id + "/profile"}
-            className="flex-grow cursor-pointer truncate text-sm"
-            title={`${team.name}`}>
-            {teamInfo}
-          </Link>
+          team.slug ? (
+            <Link
+              data-testid="team-list-item-link"
+              href={`/settings/teams/${team.id}/profile`}
+              className="flex-grow cursor-pointer truncate text-sm"
+              title={`${team.name}`}>
+              {teamInfo}
+            </Link>
+          ) : (
+            <TeamPublishSection teamId={team.id}>{teamInfo}</TeamPublishSection>
+          )
         ) : (
           teamInfo
         )}
         <div className="px-5 py-5">
           {isInvitee ? (
             <>
-              <div className="hidden sm:block">
+              <div className="hidden justify-center sm:flex">
                 <Button type="button" color="secondary" onClick={declineInvite}>
                   {t("reject")}
                 </Button>
                 <Button
                   type="button"
-                  color="primary"
-                  className="ltr:ml-2 ltr:mr-2 rtl:ml-2"
+                  color="secondary"
+                  data-testid={`accept-invitation-${team.id}`}
+                  StartIcon={Check}
+                  className="me-2 ms-2"
                   onClick={acceptInvite}>
                   {t("accept")}
                 </Button>
@@ -115,20 +216,16 @@ export default function TeamListItem(props: Props) {
               <div className="block sm:hidden">
                 <Dropdown>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" color="minimal" size="icon" StartIcon={Icon.FiMoreHorizontal} />
+                    <Button type="button" color="minimal" variant="icon" StartIcon={MoreHorizontal} />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent>
                     <DropdownMenuItem>
-                      <DropdownItem type="button" StartIcon={Icon.FiCheck} onClick={acceptInvite}>
+                      <DropdownItem type="button" StartIcon={Check} onClick={acceptInvite}>
                         {t("accept")}
                       </DropdownItem>
                     </DropdownMenuItem>
                     <DropdownMenuItem>
-                      <DropdownItem
-                        color="destructive"
-                        type="button"
-                        StartIcon={Icon.FiX}
-                        onClick={declineInvite}>
+                      <DropdownItem color="destructive" type="button" StartIcon={X} onClick={declineInvite}>
                         {t("reject")}
                       </DropdownItem>
                     </DropdownMenuItem>
@@ -146,26 +243,35 @@ export default function TeamListItem(props: Props) {
                       color="secondary"
                       onClick={() => {
                         navigator.clipboard.writeText(
-                          process.env.NEXT_PUBLIC_WEBSITE_URL + "/team/" + team.slug
+                          `${getTeamUrlSync({
+                            orgSlug: team.parent ? team.parent.slug : null,
+                            teamSlug: team.slug,
+                          })}`
                         );
                         showToast(t("link_copied"), "success");
                       }}
-                      size="icon"
-                      StartIcon={Icon.FiLink}
+                      variant="icon"
+                      StartIcon={LinkIcon}
                     />
                   </Tooltip>
                 )}
                 <Dropdown>
-                  <DropdownMenuTrigger asChild className="radix-state-open:rounded-r-md">
-                    <Button type="button" color="secondary" size="icon" StartIcon={Icon.FiMoreHorizontal} />
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="radix-state-open:rounded-r-md"
+                      type="button"
+                      color="secondary"
+                      variant="icon"
+                      StartIcon={MoreHorizontal}
+                    />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent hidden={hideDropdown}>
                     {isAdmin && (
                       <DropdownMenuItem>
                         <DropdownItem
                           type="button"
-                          href={"/settings/teams/" + team.id + "/profile"}
-                          StartIcon={Icon.FiEdit2}>
+                          href={`/settings/teams/${team.id}/profile`}
+                          StartIcon={Edit2}>
                           {t("edit_team") as string}
                         </DropdownItem>
                       </DropdownMenuItem>
@@ -176,9 +282,24 @@ export default function TeamListItem(props: Props) {
                         <DropdownItem
                           type="button"
                           target="_blank"
-                          href={`${process.env.NEXT_PUBLIC_WEBSITE_URL}/team/${team.slug}`}
-                          StartIcon={Icon.FiExternalLink}>
+                          href={`${getTeamUrlSync({
+                            orgSlug: team.parent ? team.parent.slug : null,
+                            teamSlug: team.slug,
+                          })}`}
+                          StartIcon={ExternalLink}>
                           {t("preview_team") as string}
+                        </DropdownItem>
+                      </DropdownMenuItem>
+                    )}
+                    {isAdmin && (
+                      <DropdownMenuItem>
+                        <DropdownItem
+                          type="button"
+                          onClick={() => {
+                            setOpenMemberInvitationModal(true);
+                          }}
+                          StartIcon={Send}>
+                          {t("invite_team_member") as string}
                         </DropdownItem>
                       </DropdownMenuItem>
                     )}
@@ -190,7 +311,7 @@ export default function TeamListItem(props: Props) {
                             <DropdownItem
                               color="destructive"
                               type="button"
-                              StartIcon={Icon.FiTrash}
+                              StartIcon={Trash}
                               onClick={(e) => {
                                 e.stopPropagation();
                               }}>
@@ -215,17 +336,15 @@ export default function TeamListItem(props: Props) {
                       <DropdownMenuItem>
                         <Dialog>
                           <DialogTrigger asChild>
-                            <Button
-                              type="button"
+                            <DropdownItem
                               color="destructive"
-                              size="lg"
-                              StartIcon={Icon.FiLogOut}
-                              className="w-full rounded-none"
+                              type="button"
+                              StartIcon={LogOut}
                               onClick={(e) => {
                                 e.stopPropagation();
                               }}>
                               {t("leave_team")}
-                            </Button>
+                            </DropdownItem>
                           </DialogTrigger>
                           <ConfirmationDialogContent
                             variety="danger"
@@ -267,9 +386,32 @@ const TeamPublishButton = ({ teamId }: { teamId: number }) => {
         onClick={() => {
           publishTeamMutation.mutate({ teamId });
         }}
-        StartIcon={Icon.FiGlobe}>
+        StartIcon={Globe}>
         {t("team_publish")}
       </DropdownItem>
     </DropdownMenuItem>
+  );
+};
+
+const TeamPublishSection = ({ children, teamId }: { children: React.ReactNode; teamId: number }) => {
+  const router = useRouter();
+  const publishTeamMutation = trpc.viewer.teams.publish.useMutation({
+    onSuccess(data) {
+      router.push(data.url);
+    },
+    onError: (error) => {
+      showToast(error.message, "error");
+    },
+  });
+
+  return (
+    <button
+      className="block flex-grow cursor-pointer truncate text-left text-sm"
+      type="button"
+      onClick={() => {
+        publishTeamMutation.mutate({ teamId });
+      }}>
+      {children}
+    </button>
   );
 };
