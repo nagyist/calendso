@@ -2,6 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { PrismaClient as PrismaClientWithoutExtension } from "@prisma/client";
 import { withAccelerate } from "@prisma/extension-accelerate";
 
+import { bookingIdempotencyKeyExtension } from "./extensions/booking-idempotency-key";
+import { disallowUndefinedDeleteUpdateManyExtension } from "./extensions/disallow-undefined-delete-update-many";
+import { excludeLockedUsersExtension } from "./extensions/exclude-locked-users";
+import { excludePendingPaymentsExtension } from "./extensions/exclude-pending-payment-teams";
+import { usageTrackingExtention } from "./extensions/usage-tracking";
 import { bookingReferenceMiddleware } from "./middleware";
 
 const prismaOptions: Prisma.PrismaClientOptions = {};
@@ -11,14 +16,39 @@ const globalForPrisma = global as unknown as {
   prismaWithClientExtensions: PrismaClientWithExtensions;
 };
 
-if (!!process.env.NEXT_PUBLIC_DEBUG) prismaOptions.log = ["query", "error", "warn"];
+const loggerLevel = parseInt(process.env.NEXT_PUBLIC_LOGGER_LEVEL ?? "", 10);
+
+if (!isNaN(loggerLevel)) {
+  switch (loggerLevel) {
+    case 5:
+    case 6:
+      prismaOptions.log = ["error"];
+      break;
+    case 4:
+      prismaOptions.log = ["warn", "error"];
+      break;
+    case 3:
+      prismaOptions.log = ["info", "error", "warn"];
+      break;
+    default:
+      // For values 0, 1, 2 (or anything else below 3)
+      prismaOptions.log = ["query", "info", "error", "warn"];
+      break;
+  }
+}
 
 // Prevents flooding with idle connections
 const prismaWithoutClientExtensions =
   globalForPrisma.prismaWithoutClientExtensions || new PrismaClientWithoutExtension(prismaOptions);
 
 export const customPrisma = (options?: Prisma.PrismaClientOptions) =>
-  new PrismaClientWithoutExtension({ ...prismaOptions, ...options }).$extends(withAccelerate());
+  new PrismaClientWithoutExtension({ ...prismaOptions, ...options })
+    .$extends(usageTrackingExtention())
+    .$extends(excludeLockedUsersExtension())
+    .$extends(excludePendingPaymentsExtension())
+    .$extends(bookingIdempotencyKeyExtension())
+    .$extends(disallowUndefinedDeleteUpdateManyExtension())
+    .$extends(withAccelerate());
 
 // If any changed on middleware server restart is required
 // TODO: Migrate it to $extends
@@ -27,35 +57,12 @@ bookingReferenceMiddleware(prismaWithoutClientExtensions);
 // FIXME: Due to some reason, there are types failing in certain places due to the $extends. Fix it and then enable it
 // Specifically we get errors like `Type 'string | Date | null | undefined' is not assignable to type 'Exact<string | Date | null | undefined, string | Date | null | undefined>'`
 const prismaWithClientExtensions = prismaWithoutClientExtensions
-  //
+  .$extends(usageTrackingExtention())
+  .$extends(excludeLockedUsersExtension())
+  .$extends(excludePendingPaymentsExtension())
+  .$extends(bookingIdempotencyKeyExtension())
+  .$extends(disallowUndefinedDeleteUpdateManyExtension())
   .$extends(withAccelerate());
-// .$extends({
-//   query: {
-//     $allModels: {
-//       async $allOperations({ model, operation, args, query }) {
-//         const start = performance.now();
-//         /* your custom logic here */
-//         const res = await query(args);
-//         const end = performance.now();
-//         logger.debug("Query Perf: ", `${model}.${operation} took ${(end - start).toFixed(2)}ms\n`);
-//         return res;
-//       },
-//     },
-//   },
-// });
-// .$extends({
-//   name: "teamUpdateWithMetadata",
-//   query: {
-//     team: {
-//       async update({ model, operation, args, query }) {
-//         if (args.data.metadata) {
-//          // Prepare args.data with merged metadata
-//         }
-//         return query(args);
-//       },
-//     },
-//   },
-// })
 
 export const prisma = globalForPrisma.prismaWithClientExtensions || prismaWithClientExtensions;
 
@@ -74,6 +81,15 @@ if (process.env.NODE_ENV !== "production") {
 
 type PrismaClientWithExtensions = typeof prismaWithClientExtensions;
 export type PrismaClient = PrismaClientWithExtensions;
+
+type OmitPrismaClient = Omit<
+  PrismaClient,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
+>;
+
+// we cant pass tx to functions as types miss match since we have a custom prisma client https://github.com/prisma/prisma/discussions/20924#discussioncomment-10077649
+export type PrismaTransaction = OmitPrismaClient;
+
 export default prisma;
 
 export * from "./selects";

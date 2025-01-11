@@ -1,18 +1,20 @@
 import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 
-import { test } from "@calcom/web/playwright/lib/fixtures";
+import { test, todo } from "@calcom/web/playwright/lib/fixtures";
 import type { Fixtures } from "@calcom/web/playwright/lib/fixtures";
 import { selectFirstAvailableTimeSlotNextMonth } from "@calcom/web/playwright/lib/testUtils";
 
 import {
-  todo,
   getEmbedIframe,
   bookFirstEvent,
   getBooking,
   deleteAllBookingsByEmail,
   rescheduleEvent,
 } from "../lib/testUtils";
+
+// in parallel mode sometimes handleNewBooking endpoint throws "No available users found" error, this never happens in serial mode.
+test.describe.configure({ mode: "serial" });
 
 async function bookFirstFreeUserEventThroughEmbed({
   addEmbedListeners,
@@ -88,10 +90,10 @@ test.describe("Popup Tests", () => {
     });
 
     await test.step("Reschedule the booking", async () => {
-      await addEmbedListeners("popupReschedule");
-      await page.goto(`/?popupRescheduleId=${booking.uid}`);
-      await page.click('[data-cal-namespace="popupReschedule"]');
-      const calNamespace = "popupReschedule";
+      const calNamespace = "popupRescheduleWithReschedulePath";
+      await addEmbedListeners(calNamespace);
+      await page.goto(`/?popupRescheduleUid=${booking.uid}`);
+      await page.click(`[data-cal-namespace="${calNamespace}"]`);
       const embedIframe = await getEmbedIframe({ calNamespace, page, pathname: booking.eventSlug });
       if (!embedIframe) {
         throw new Error("Embed iframe not found");
@@ -111,16 +113,10 @@ test.describe("Popup Tests", () => {
     const calNamespace = "routingFormAuto";
     await addEmbedListeners(calNamespace);
     await page.goto("/?only=prerender-test");
-    let embedIframe = await getEmbedIframe({
-      calNamespace,
-      page,
-      pathname: "/forms/948ae412-d995-4865-875a-48302588de03",
-    });
-    expect(embedIframe).toBeFalsy();
     await page.click(
       `[data-cal-namespace=${calNamespace}][data-cal-link="forms/948ae412-d995-4865-875a-48302588de03"]`
     );
-    embedIframe = await getEmbedIframe({
+    const embedIframe = await getEmbedIframe({
       calNamespace,
       page,
       pathname: "/forms/948ae412-d995-4865-875a-48302588de03",
@@ -261,6 +257,21 @@ test.describe("Popup Tests", () => {
 
     await expect(embedIframe).toBeEmbedCalLink(calNamespace, embeds.getActionFiredDetails, {
       pathname: calLink,
+    });
+  });
+
+  test("should open on clicking child element", async ({ page, embeds }) => {
+    await deleteAllBookingsByEmail("embed-user@example.com");
+    const calNamespace = "childElementTarget";
+    const configuredLink = "/free/30min";
+    await embeds.gotoPlayground({ calNamespace, url: "/" });
+
+    await page.click(`[data-cal-namespace="${calNamespace}"] b`);
+
+    const embedIframe = await getEmbedIframe({ calNamespace, page, pathname: configuredLink });
+
+    await expect(embedIframe).toBeEmbedCalLink(calNamespace, embeds.getActionFiredDetails, {
+      pathname: configuredLink,
     });
   });
 });

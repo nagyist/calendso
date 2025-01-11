@@ -17,15 +17,6 @@ test.describe("Payment", () => {
 
       const user = await users.create();
       await user.apiLogin();
-
-      await context.addCookies([
-        {
-          name: "x-calcom-future-routes-override",
-          value: "1",
-          url: "http://localhost:3000",
-        },
-      ]);
-
       await page.goto("/apps");
 
       await page.getByPlaceholder("Search").click();
@@ -49,8 +40,6 @@ test.describe("Payment", () => {
       await page.getByTestId("update-eventtype").click();
 
       await page.goto(`${user.username}/30-min`);
-
-      await page.waitForLoadState("networkidle");
 
       await selectFirstAvailableTimeSlotNextMonth(page);
       await bookTimeSlot(page);

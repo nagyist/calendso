@@ -3,13 +3,13 @@ import type { ReactNode } from "react";
 
 import { classNames } from "@calcom/lib";
 
-import { Label } from "..";
+import { Label } from "../inputs/Label";
 import Switch from "./Switch";
 
 type Props = {
   children?: ReactNode;
   title: string;
-  description?: string;
+  description?: string | React.ReactNode;
   checked: boolean;
   disabled?: boolean;
   LockedIcon?: React.ReactNode;
@@ -21,6 +21,8 @@ type Props = {
   childrenClassName?: string;
   switchContainerClassName?: string;
   labelClassName?: string;
+  descriptionClassName?: string;
+  noIndentation?: boolean;
 };
 
 function SettingsToggle({
@@ -37,6 +39,8 @@ function SettingsToggle({
   childrenClassName,
   switchContainerClassName,
   labelClassName,
+  descriptionClassName,
+  noIndentation = false,
   ...rest
 }: Props) {
   const [animateRef] = useAutoAnimate<HTMLDivElement>();
@@ -53,15 +57,25 @@ function SettingsToggle({
                 switchContainerClassName
               )}>
               <div>
-                <div className="flex items-center">
+                <div className="flex items-center gap-x-2" data-testid={`${rest["data-testid"]}-title`}>
                   <Label
-                    className={classNames("mt-0.5 text-base font-semibold leading-none", labelClassName)}>
+                    className={classNames("mt-0.5 text-base font-semibold leading-none", labelClassName)}
+                    htmlFor="">
                     {title}
                     {LockedIcon}
                   </Label>
                   {Badge && <div className="mb-2">{Badge}</div>}
                 </div>
-                {description && <p className="text-default -mt-1.5 text-sm leading-normal">{description}</p>}
+                {description && (
+                  <p
+                    className={classNames(
+                      "text-default -mt-1.5 text-sm leading-normal",
+                      descriptionClassName
+                    )}
+                    data-testid={`${rest["data-testid"]}-description`}>
+                    {description}
+                  </p>
+                )}
               </div>
               <div className="my-auto h-full">
                 <Switch
@@ -86,7 +100,8 @@ function SettingsToggle({
               />
 
               <div>
-                <Label className="text-emphasis text-sm font-semibold leading-none">
+                <Label
+                  className={classNames("text-emphasis text-sm font-semibold leading-none", labelClassName)}>
                   {title}
                   {LockedIcon}
                 </Label>
@@ -95,7 +110,7 @@ function SettingsToggle({
             </div>
           )}
           {children && (
-            <div className={classNames("lg:ml-14", childrenClassName)} ref={animateRef}>
+            <div className={classNames(noIndentation ? "" : "lg:ml-14", childrenClassName)} ref={animateRef}>
               {checked && <div className={classNames(!toggleSwitchAtTheEnd && "mt-4")}>{children}</div>}
             </div>
           )}

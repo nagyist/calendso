@@ -10,16 +10,18 @@ import { LoadingInsight } from "./LoadingInsights";
 export const PopularEventsTable = () => {
   const { t } = useLocale();
   const { filter } = useFilterContext();
-  const { dateRange, selectedMemberUserId, selectedUserId, isAll, initialConfig } = filter;
+  const { dateRange, selectedMemberUserId, selectedUserId, isAll, initialConfig, selectedEventTypeId } =
+    filter;
   const [startDate, endDate] = dateRange;
   const { selectedTeamId: teamId } = filter;
 
-  const { data, isSuccess, isLoading } = trpc.viewer.insights.popularEventTypes.useQuery(
+  const { data, isSuccess, isPending } = trpc.viewer.insights.popularEventTypes.useQuery(
     {
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
       teamId: teamId ?? undefined,
       userId: selectedUserId ?? undefined,
+      eventTypeId: selectedEventTypeId ?? undefined,
       memberUserId: selectedMemberUserId ?? undefined,
       isAll,
     },
@@ -32,7 +34,7 @@ export const PopularEventsTable = () => {
     }
   );
 
-  if (isLoading) return <LoadingInsight />;
+  if (isPending) return <LoadingInsight />;
 
   if (!isSuccess || !startDate || !endDate || (!teamId && !selectedUserId)) return null;
 
@@ -41,16 +43,19 @@ export const PopularEventsTable = () => {
       <Title className="text-emphasis">{t("popular_events")}</Title>
       <Table className="mt-5">
         <TableBody>
-          {data.map((item) => (
-            <TableRow key={item.eventTypeId}>
-              <TableCell className="text-default">{item.eventTypeName}</TableCell>
-              <TableCell>
-                <Text className="text-default text-right">
-                  <strong>{item.count}</strong>
-                </Text>
-              </TableCell>
-            </TableRow>
-          ))}
+          {data.map(
+            (item) =>
+              item.eventTypeId && (
+                <TableRow key={item.eventTypeId}>
+                  <TableCell className="text-default">{item.eventTypeName}</TableCell>
+                  <TableCell>
+                    <Text className="text-default text-right">
+                      <strong>{item.count}</strong>
+                    </Text>
+                  </TableCell>
+                </TableRow>
+              )
+          )}
         </TableBody>
       </Table>
       {data.length === 0 && (

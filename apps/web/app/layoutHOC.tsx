@@ -7,24 +7,55 @@ import { buildLegacyCtx } from "@lib/buildLegacyCtx";
 import PageWrapper from "@components/PageWrapperAppDir";
 
 type WithLayoutParams<T extends Record<string, any>> = {
-  getLayout: ((page: React.ReactElement) => React.ReactNode) | null;
+  getLayout?: ((page: React.ReactElement) => React.ReactNode) | null;
+  getServerLayout?: (page: React.ReactElement) => Promise<React.ReactNode | null>;
   Page?: (props: T) => React.ReactElement | null;
-  getData?: (arg: GetServerSidePropsContext) => Promise<T>;
+  ServerPage?: (props: T) => Promise<React.ReactElement> | null;
+  getData?: (arg: GetServerSidePropsContext) => Promise<T | undefined>;
+  isBookingPage?: boolean;
+  requiresLicense?: boolean;
 };
 
-export function WithLayout<T extends Record<string, any>>({ getLayout, getData, Page }: WithLayoutParams<T>) {
+export function WithLayout<T extends Record<string, any>>({
+  getLayout,
+  getServerLayout,
+  getData,
+  ServerPage,
+  Page,
+  isBookingPage,
+  requiresLicense,
+}: WithLayoutParams<T>) {
+  // eslint-disable-next-line react/display-name
   return async <P extends "P" | "L">(p: P extends "P" ? PageProps : LayoutProps) => {
     const h = headers();
     const nonce = h.get("x-nonce") ?? undefined;
-    const props = getData
-      ? await getData(buildLegacyCtx(h, cookies(), p.params) as unknown as GetServerSidePropsContext)
-      : ({} as T);
+    let props = {} as T;
 
-    const children = "children" in p ? p.children : null;
+    if ("searchParams" in p && getData) {
+      props = (await getData(buildLegacyCtx(h, cookies(), p.params, p.searchParams))) ?? ({} as T);
+    }
+
+    // `p.children` exists only for layout.tsx files
+    const childrenFromLayoutFile = "children" in p ? p.children : null;
+    const page = ServerPage ? (
+      await ServerPage({ ...props, ...p })
+    ) : Page ? (
+      <Page {...props} />
+    ) : (
+      childrenFromLayoutFile
+    );
+    const pageWithServerLayout = page ? (getServerLayout ? await getServerLayout(page) : page) : null;
 
     return (
-      <PageWrapper getLayout={getLayout} requiresLicense={false} nonce={nonce} themeBasis={null} {...props}>
-        {Page ? <Page {...props} /> : children}
+      <PageWrapper
+        getLayout={getLayout}
+        requiresLicense={requiresLicense || !!(Page && "requiresLicense" in Page && Page.requiresLicense)}
+        nonce={nonce}
+        themeBasis={null}
+        isThemeSupported={Page && "isThemeSupported" in Page ? (Page.isThemeSupported as boolean) : undefined}
+        isBookingPage={isBookingPage || !!(Page && "isBookingPage" in Page && Page.isBookingPage)}
+        {...props}>
+        {pageWithServerLayout}
       </PageWrapper>
     );
   };

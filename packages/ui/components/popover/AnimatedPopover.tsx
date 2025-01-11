@@ -2,9 +2,9 @@ import * as Popover from "@radix-ui/react-popover";
 import React from "react";
 
 import { classNames } from "@calcom/lib";
-import { Tooltip } from "@calcom/ui";
 
-import { ChevronDown } from "../icon";
+import { Icon } from "../icon";
+import { Tooltip } from "../tooltip";
 
 export const AnimatedPopover = ({
   text,
@@ -60,7 +60,7 @@ export const AnimatedPopover = ({
             Trigger
           ) : (
             <div className="max-w-36 flex items-center">
-              <Tooltip content={`${prefix}${text}`}>
+              <Tooltip content={prefix ? `${prefix}${text}` : text}>
                 <div className="flex select-none truncate font-medium">
                   {prefix && <span className="text-subtle">{prefix}&nbsp;</span>}
                   {text}
@@ -72,7 +72,8 @@ export const AnimatedPopover = ({
                   )}
                 </div>
               </Tooltip>
-              <ChevronDown
+              <Icon
+                name="chevron-down"
                 className={classNames("ml-2 w-4 transition-transform duration-150", open && "rotate-180")}
               />
             </div>

@@ -1,6 +1,11 @@
-import type { BookingSeat, DestinationCalendar, Prisma, SelectedCalendar } from "@prisma/client";
+import type { calendar_v3 } from "@googleapis/calendar";
+import type {
+  BookingSeat,
+  DestinationCalendar,
+  Prisma,
+  SelectedCalendar as _SelectedCalendar,
+} from "@prisma/client";
 import type { Dayjs } from "dayjs";
-import type { calendar_v3 } from "googleapis";
 import type { Time } from "ical.js";
 import type { TFunction } from "next-i18next";
 import type z from "zod";
@@ -36,12 +41,14 @@ export type Person = {
   locale?: string | null;
   timeFormat?: TimeFormat;
   bookingSeat?: BookingSeat | null;
+  phoneNumber?: string | null;
 };
 
 export type TeamMember = {
   id?: number;
   name: string;
   email: string;
+  phoneNumber?: string | null;
   timeZone: string;
   language: { translate: TFunction; locale: string };
 };
@@ -55,6 +62,7 @@ export type EventBusyDate = {
 export type EventBusyDetails = EventBusyDate & {
   title?: string;
   source?: string | null;
+  userId?: number | null;
 };
 
 export type CalendarServiceType = typeof Calendar;
@@ -63,11 +71,15 @@ export type AdditionalInfo = Record<string, unknown> & { calWarnings?: string[] 
 export type NewCalendarEventType = {
   uid: string;
   id: string;
+  thirdPartyRecurringEventId?: string | null;
   type: string;
   password: string;
   url: string;
   additionalInfo: AdditionalInfo;
   iCalUID?: string | null;
+  location?: string | null;
+  hangoutLink?: string | null;
+  conferenceData?: ConferenceData;
 };
 
 export type CalendarEventType = {
@@ -140,8 +152,13 @@ export type CalEventResponses = Record<
   {
     label: string;
     value: z.infer<typeof bookingResponse>;
+    isHidden?: boolean;
   }
 >;
+
+export interface ExistingRecurringEvent {
+  recurringEventId: string;
+}
 
 // If modifying this interface, probably should update builders/calendarEvent files
 export interface CalendarEvent {
@@ -154,6 +171,7 @@ export interface CalendarEvent {
   endTime: string;
   organizer: Person;
   attendees: Person[];
+  length?: number | null;
   additionalNotes?: string | null;
   customInputs?: Prisma.JsonObject | null;
   description?: string | null;
@@ -167,6 +185,7 @@ export interface CalendarEvent {
   conferenceData?: ConferenceData;
   additionalInformation?: AdditionalInformation;
   uid?: string | null;
+  existingRecurringEvent?: ExistingRecurringEvent | null;
   bookingId?: number;
   videoCallData?: VideoCallData;
   paymentInfo?: PaymentInfo | null;
@@ -175,6 +194,7 @@ export interface CalendarEvent {
   cancellationReason?: string | null;
   rejectionReason?: string | null;
   hideCalendarNotes?: boolean;
+  hideCalendarEventDetails?: boolean;
   recurrence?: string;
   recurringEvent?: RecurringEvent | null;
   eventTypeId?: number | null;
@@ -192,6 +212,12 @@ export interface CalendarEvent {
 
   // It just has responses to only the user fields. It allows to easily iterate over to show only user fields
   userFieldsResponses?: CalEventResponses | null;
+  platformClientId?: string | null;
+  platformRescheduleUrl?: string | null;
+  platformCancelUrl?: string | null;
+  platformBookingUrl?: string | null;
+  oneTimePassword?: string | null;
+  domainWideDelegationCredentialId?: string | null;
 }
 
 export interface EntryPoint {
@@ -211,7 +237,7 @@ export interface AdditionalInformation {
   hangoutLink?: string;
 }
 
-export interface IntegrationCalendar extends Ensure<Partial<SelectedCalendar>, "externalId"> {
+export interface IntegrationCalendar extends Ensure<Partial<_SelectedCalendar>, "externalId"> {
   primary?: boolean;
   name?: string;
   readOnly?: boolean;
@@ -221,6 +247,11 @@ export interface IntegrationCalendar extends Ensure<Partial<SelectedCalendar>, "
   credentialId?: number | null;
   integrationTitle?: string;
 }
+
+/**
+ * null is to refer to user-level SelectedCalendar
+ */
+export type SelectedCalendarEventTypeIds = (number | null)[];
 
 export interface Calendar {
   createEvent(event: CalendarEvent, credentialId: number): Promise<NewCalendarEventType>;
@@ -236,10 +267,29 @@ export interface Calendar {
   getAvailability(
     dateFrom: string,
     dateTo: string,
-    selectedCalendars: IntegrationCalendar[]
+    selectedCalendars: IntegrationCalendar[],
+    shouldServeCache?: boolean
   ): Promise<EventBusyDate[]>;
 
+  // for OOO calibration (only google calendar for now)
+  getAvailabilityWithTimeZones?(
+    dateFrom: string,
+    dateTo: string,
+    selectedCalendars: IntegrationCalendar[]
+  ): Promise<{ start: Date | string; end: Date | string; timeZone: string }[]>;
+
+  fetchAvailabilityAndSetCache?(selectedCalendars: IntegrationCalendar[]): Promise<unknown>;
+
   listCalendars(event?: CalendarEvent): Promise<IntegrationCalendar[]>;
+
+  watchCalendar?(options: {
+    calendarId: string;
+    eventTypeIds: SelectedCalendarEventTypeIds;
+  }): Promise<unknown>;
+  unwatchCalendar?(options: {
+    calendarId: string;
+    eventTypeIds: SelectedCalendarEventTypeIds;
+  }): Promise<void>;
 }
 
 /**
@@ -248,3 +298,8 @@ export interface Calendar {
 type Class<I, Args extends any[] = any[]> = new (...args: Args) => I;
 
 export type CalendarClass = Class<Calendar, [CredentialPayload]>;
+
+export type SelectedCalendar = Pick<
+  _SelectedCalendar,
+  "userId" | "integration" | "externalId" | "credentialId"
+>;

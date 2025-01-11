@@ -8,14 +8,7 @@ test.describe.configure({ mode: "parallel" });
 test.afterEach(({ users }) => users.deleteAll());
 
 test.describe("App Store - Authed", () => {
-  test("should point to the /future/apps/", async ({ page, users, context }) => {
-    await context.addCookies([
-      {
-        name: "x-calcom-future-routes-override",
-        value: "1",
-        url: "http://localhost:3000",
-      },
-    ]);
+  test("should render /apps page", async ({ page, users, context }) => {
     const user = await users.create();
 
     await user.apiLogin();
@@ -23,12 +16,6 @@ test.describe("App Store - Authed", () => {
     await page.goto("/apps/");
 
     await page.waitForLoadState();
-
-    const dataNextJsRouter = await page.evaluate(() =>
-      window.document.documentElement.getAttribute("data-nextjs-router")
-    );
-
-    expect(dataNextJsRouter).toEqual("app");
 
     const locator = page.getByRole("heading", { name: "App Store" });
 
@@ -42,6 +29,19 @@ test.describe("App Store - Authed", () => {
     await installAppleCalendar(page);
 
     await expect(page.locator(`text=Connect to Apple Server`)).toBeVisible();
+  });
+
+  test("Can add Google calendar from the app store", async ({ page, users }) => {
+    const user = await users.create();
+    await user.apiLogin();
+
+    await page.goto("/apps/google-calendar");
+
+    await page.getByTestId("install-app-button").click();
+
+    await page.waitForNavigation();
+
+    await expect(page.url()).toContain("accounts.google.com");
   });
 
   test("Installed Apps - Navigation", async ({ page, users }) => {

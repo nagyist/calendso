@@ -66,6 +66,7 @@ export interface App {
     | `${string}_other`
     | `${string}_automation`
     | `${string}_analytics`
+    | `${string}_crm`
     | `${string}_other_calendar`;
 
   /**
@@ -79,7 +80,15 @@ export interface App {
   /** A brief description, usually found in the app's package.json */
   description: string;
   /** TODO determine if we should use this instead of category */
-  variant: "calendar" | "payment" | "conferencing" | "video" | "other" | "other_calendar" | "automation";
+  variant:
+    | "calendar"
+    | "payment"
+    | "conferencing"
+    | "video"
+    | "other"
+    | "other_calendar"
+    | "automation"
+    | "crm";
   /** The slug for the app store public page inside `/apps/[slug] */
   slug: string;
 
@@ -122,7 +131,7 @@ export interface App {
   isGlobal?: boolean;
   /**
    * For apps that are accessible on an alternate URL(which is simpler and shorter), this can be set.
-   * e.g. Routing Forms App is available as /routing-forms in addition to regular /apps/routing-forms.
+   * e.g. Routing Forms App is available as /routing-forms in addition to regular /routing.
    */
   simplePath?: string;
   /** A contact email, mainly to ask for support */
@@ -156,6 +165,8 @@ export interface App {
   concurrentMeetings?: boolean;
 
   createdAt?: string;
+  /** Specifies if the App uses an OAuth flow  */
+  isOAuth?: boolean;
 }
 
 export type AppFrontendPayload = Omit<App, "key"> & {

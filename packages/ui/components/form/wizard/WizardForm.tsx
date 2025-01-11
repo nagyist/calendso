@@ -1,3 +1,5 @@
+"use client";
+
 // eslint-disable-next-line no-restricted-imports
 import { noop } from "lodash";
 import { useRouter } from "next/navigation";
@@ -7,16 +9,17 @@ import { useEffect, useState } from "react";
 import classNames from "@calcom/lib/classNames";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 
-import { Button, Steps } from "../../..";
+import { Button } from "../../button";
+import { Steps } from "../../form/step";
 
 type DefaultStep = {
   title: string;
   containerClassname?: string;
   contentClassname?: string;
   description: string;
-  content?: ((setIsLoading: Dispatch<SetStateAction<boolean>>) => JSX.Element) | JSX.Element;
+  content?: ((setIsPending: Dispatch<SetStateAction<boolean>>) => JSX.Element) | JSX.Element;
   isEnabled?: boolean;
-  isLoading?: boolean;
+  isPending?: boolean;
 };
 
 function WizardForm<T extends DefaultStep>(props: {
@@ -37,10 +40,10 @@ function WizardForm<T extends DefaultStep>(props: {
   const setStep = (newStep: number) => {
     router.replace(`${href}?step=${newStep || 1}`);
   };
-  const [currentStepIsLoading, setCurrentStepIsLoading] = useState(false);
+  const [currentStepisPending, setCurrentStepisPending] = useState(false);
 
   useEffect(() => {
-    setCurrentStepIsLoading(false);
+    setCurrentStepisPending(false);
   }, [currentStep]);
 
   return (
@@ -57,7 +60,7 @@ function WizardForm<T extends DefaultStep>(props: {
             <Steps
               maxSteps={steps.length}
               currentStep={step}
-              navigateToStep={noop}
+              nextStep={noop}
               stepLabel={stepLabel}
               data-testid="wizard-step-component"
             />
@@ -67,7 +70,7 @@ function WizardForm<T extends DefaultStep>(props: {
       <div className={classNames("mb-8 overflow-hidden md:w-[700px]", props.containerClassname)}>
         <div className={classNames("print:p-none max-w-3xl px-8 py-5 sm:p-6", currentStep.contentClassname)}>
           {typeof currentStep.content === "function"
-            ? currentStep.content(setCurrentStepIsLoading)
+            ? currentStep.content(setCurrentStepisPending)
             : currentStep.content}
         </div>
         {!props.disableNavigation && (
@@ -84,7 +87,7 @@ function WizardForm<T extends DefaultStep>(props: {
 
             <Button
               tabIndex={0}
-              loading={currentStepIsLoading}
+              loading={currentStepisPending}
               type="submit"
               color="primary"
               form={`wizard-step-${step}`}
