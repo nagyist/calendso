@@ -1,4 +1,6 @@
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
+import { bookingResponsesDbSchema } from "@calcom/features/bookings/lib/getBookingResponsesSchema";
+import { workflowSelect } from "@calcom/features/ee/workflows/lib/getAllWorkflows";
 import prisma from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { BookingStatus } from "@calcom/prisma/enums";
@@ -37,6 +39,12 @@ export const getEventTypesFromDB = async (id: number) => {
       bookingFields: true,
       disableGuests: true,
       timeZone: true,
+      profile: {
+        select: {
+          organizationId: true,
+        },
+      },
+      teamId: true,
       owner: {
         select: userSelect,
       },
@@ -60,10 +68,7 @@ export const getEventTypesFromDB = async (id: number) => {
       workflows: {
         select: {
           workflow: {
-            select: {
-              id: true,
-              steps: true,
-            },
+            select: workflowSelect,
           },
         },
       },
@@ -71,6 +76,7 @@ export const getEventTypesFromDB = async (id: number) => {
       seatsPerTimeSlot: true,
       seatsShowAttendees: true,
       seatsShowAvailabilityCount: true,
+      schedulingType: true,
       periodStartDate: true,
       periodEndDate: true,
     },
@@ -81,11 +87,13 @@ export const getEventTypesFromDB = async (id: number) => {
   }
 
   const metadata = EventTypeMetaDataSchema.parse(eventType.metadata);
+  const { profile, ...restEventType } = eventType;
+  const isOrgTeamEvent = !!eventType?.team && !!profile?.organizationId;
 
   return {
     isDynamic: false,
-    ...eventType,
-    bookingFields: getBookingFieldsWithSystemFields(eventType),
+    ...restEventType,
+    bookingFields: getBookingFieldsWithSystemFields({ ...eventType, isOrgTeamEvent }),
     metadata,
   };
 };
@@ -100,7 +108,7 @@ export const handleSeatsEventTypeOnBooking = async (
   bookingInfo: Partial<
     Prisma.BookingGetPayload<{
       include: {
-        attendees: { select: { name: true; email: true } };
+        attendees: { select: { name: true; email: true; phoneNumber: true } };
         seatsReferences: { select: { referenceUid: true } };
         user: {
           select: {
@@ -115,21 +123,24 @@ export const handleSeatsEventTypeOnBooking = async (
     }>
   >,
   seatReferenceUid?: string,
-  userId?: number
+  isHost?: boolean
 ) => {
-  if (eventType?.seatsPerTimeSlot !== null) {
-    // @TODO: right now bookings with seats doesn't save every description that its entered by every user
-    delete bookingInfo.description;
-  } else {
-    return;
-  }
-  // @TODO: If handling teams, we need to do more check ups for this.
-  if (bookingInfo?.user?.id === userId) {
-    return;
-  }
-
-  if (!eventType.seatsShowAttendees) {
-    const seatAttendee = await prisma.bookingSeat.findFirst({
+  bookingInfo["responses"] = {};
+  type seatAttendee = {
+    attendee: {
+      email: string;
+      name: string;
+      phoneNumber: string | null;
+    };
+    id: number;
+    data: Prisma.JsonValue;
+    bookingId: number;
+    attendeeId: number;
+    referenceUid: string;
+  } | null;
+  let seatAttendee: seatAttendee = null;
+  if (seatReferenceUid) {
+    seatAttendee = await prisma.bookingSeat.findFirst({
       where: {
         referenceUid: seatReferenceUid,
       },
@@ -138,20 +149,39 @@ export const handleSeatsEventTypeOnBooking = async (
           select: {
             name: true,
             email: true,
+            phoneNumber: true,
           },
         },
       },
     });
+  }
+  if (seatAttendee) {
+    const seatAttendeeData = seatAttendee.data as unknown as {
+      description?: string;
+      responses: Prisma.JsonValue;
+    };
+    bookingInfo["description"] = seatAttendeeData.description ?? null;
+    bookingInfo["responses"] = bookingResponsesDbSchema.parse(seatAttendeeData.responses ?? {});
+  }
 
+  if (!eventType.seatsShowAttendees && !isHost) {
     if (seatAttendee) {
       const attendee = bookingInfo?.attendees?.find((a) => {
-        return a.email === seatAttendee.attendee?.email;
+        return (
+          a.email === seatAttendee?.attendee?.email ||
+          (a.phoneNumber && a.phoneNumber === seatAttendee?.attendee?.phoneNumber)
+        );
       });
       bookingInfo["attendees"] = attendee ? [attendee] : [];
     } else {
       bookingInfo["attendees"] = [];
     }
   }
+
+  // // @TODO: If handling teams, we need to do more check ups for this.
+  // if (bookingInfo?.user?.id === userId) {
+  //   return;
+  // }
   return bookingInfo;
 };
 

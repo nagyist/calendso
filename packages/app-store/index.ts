@@ -4,14 +4,18 @@ const appStore = {
   applecalendar: () => import("./applecalendar"),
   aroundvideo: () => import("./around"),
   caldavcalendar: () => import("./caldavcalendar"),
+  campsiteconferencing: () => import("./campsite"),
   closecom: () => import("./closecom"),
   dailyvideo: () => import("./dailyvideo"),
   googlecalendar: () => import("./googlecalendar"),
   googlevideo: () => import("./googlevideo"),
   hubspot: () => import("./hubspot"),
   huddle01video: () => import("./huddle01video"),
+  "ics-feedcalendar": () => import("./ics-feedcalendar"),
+  jellyconferencing: () => import("./jelly"),
   jitsivideo: () => import("./jitsivideo"),
   larkcalendar: () => import("./larkcalendar"),
+  nextcloudtalkvideo: () => import("./nextcloudtalk"),
   office365calendar: () => import("./office365calendar"),
   office365video: () => import("./office365video"),
   plausible: () => import("./plausible"),
@@ -39,6 +43,7 @@ const appStore = {
   basecamp3: () => import("./basecamp3"),
   telegramvideo: () => import("./telegram"),
   shimmervideo: () => import("./shimmervideo"),
+  hitpay: () => import("./hitpay"),
 };
 
 const exportedAppStore: typeof appStore & {

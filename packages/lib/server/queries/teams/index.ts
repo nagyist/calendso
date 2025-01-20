@@ -1,13 +1,20 @@
 import { Prisma } from "@prisma/client";
 
 import { getAppFromSlug } from "@calcom/app-store/utils";
+import { parseBookingLimit } from "@calcom/lib";
 import prisma, { baseEventTypeSelect } from "@calcom/prisma";
+import type { Team } from "@calcom/prisma/client";
 import { SchedulingType } from "@calcom/prisma/enums";
-import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
+import { _EventTypeModel } from "@calcom/prisma/zod";
+import {
+  EventTypeMetaDataSchema,
+  allManagedEventTypeProps,
+  unlockedManagedEventTypeProps,
+} from "@calcom/prisma/zod-utils";
 
-import { WEBAPP_URL } from "../../../constants";
 import { getBookerBaseUrlSync } from "../../../getBookerUrl/client";
 import { getTeam, getOrg } from "../../repository/team";
+import { UserRepository } from "../../repository/user";
 
 export type TeamWithMembers = Awaited<ReturnType<typeof getTeamWithMembers>>;
 
@@ -16,14 +23,14 @@ export async function getTeamWithMembers(args: {
   slug?: string;
   userId?: number;
   orgSlug?: string | null;
-  includeTeamLogo?: boolean;
   isTeamView?: boolean;
+  currentOrg?: Pick<Team, "id"> | null;
   /**
    * If true, means that you are fetching an organization and not a team
    */
   isOrgView?: boolean;
 }) {
-  const { id, slug, userId, orgSlug, isTeamView, isOrgView, includeTeamLogo } = args;
+  const { id, slug, currentOrg: _currentOrg, userId, orgSlug, isTeamView, isOrgView } = args;
 
   // This should improve performance saving already app data found.
   const appDataMap = new Map();
@@ -31,14 +38,9 @@ export async function getTeamWithMembers(args: {
     username: true,
     email: true,
     name: true,
+    avatarUrl: true,
     id: true,
     bio: true,
-    organizationId: true,
-    organization: {
-      select: {
-        slug: true,
-      },
-    },
     teams: {
       select: {
         team: {
@@ -83,7 +85,8 @@ export async function getTeamWithMembers(args: {
       id: true,
       name: true,
       slug: true,
-      ...(!!includeTeamLogo ? { logo: true } : {}),
+      isOrganization: true,
+      logoUrl: true,
       bio: true,
       hideBranding: true,
       hideBookATeamMember: true,
@@ -94,8 +97,20 @@ export async function getTeamWithMembers(args: {
           id: true,
           slug: true,
           name: true,
+          isPrivate: true,
+          isOrganization: true,
+          logoUrl: true,
+          metadata: true,
+          organizationSettings: {
+            select: {
+              allowSEOIndexing: true,
+              orgProfileRedirectsToVerifiedDomain: true,
+              orgAutoAcceptEmail: true,
+            },
+          },
         },
       },
+      parentId: true,
       children: {
         select: {
           name: true,
@@ -122,9 +137,21 @@ export async function getTeamWithMembers(args: {
             not: SchedulingType.MANAGED,
           },
         },
+        orderBy: [
+          {
+            position: "desc",
+          },
+          {
+            id: "asc",
+          },
+        ] as Prisma.EventTypeOrderByWithRelationInput[],
         select: {
-          users: {
-            select: userSelect,
+          hosts: {
+            select: {
+              user: {
+                select: userSelect,
+              },
+            },
           },
           metadata: true,
           ...baseEventTypeSelect,
@@ -138,6 +165,13 @@ export async function getTeamWithMembers(args: {
           identifier: true,
         },
       },
+      organizationSettings: {
+        select: {
+          allowSEOIndexing: true,
+          orgProfileRedirectsToVerifiedDomain: true,
+          orgAutoAcceptEmail: true,
+        },
+      },
     },
   } as const;
 
@@ -145,11 +179,24 @@ export async function getTeamWithMembers(args: {
 
   if (!teamOrOrg) return null;
 
-  const members = teamOrOrg.members.map((m) => {
-    const { credentials, ...restUser } = m.user;
+  const teamOrOrgMemberships = [];
+  for (const membership of teamOrOrg.members) {
+    teamOrOrgMemberships.push({
+      ...membership,
+      user: await UserRepository.enrichUserWithItsProfile({
+        user: membership.user,
+      }),
+    });
+  }
+  const members = teamOrOrgMemberships.map((m) => {
+    const { credentials, profile, ...restUser } = m.user;
     return {
       ...restUser,
+      username: profile?.username ?? restUser.username,
       role: m.role,
+      profile: profile,
+      organizationId: profile?.organizationId ?? null,
+      organization: profile?.organization,
       accepted: m.accepted,
       disableImpersonation: m.disableImpersonation,
       subteams: orgSlug
@@ -157,8 +204,7 @@ export async function getTeamWithMembers(args: {
             .filter((membership) => membership.team.id !== teamOrOrg.id)
             .map((membership) => membership.team.slug)
         : null,
-      avatar: `${WEBAPP_URL}/${m.user.username}/avatar.png`,
-      bookerUrl: getBookerBaseUrlSync(m.user.organization?.slug || ""),
+      bookerUrl: getBookerBaseUrlSync(profile?.organization?.slug || ""),
       connectedApps: !isTeamView
         ? credentials?.map((cred) => {
             const appSlug = cred.app?.slug;
@@ -182,10 +228,26 @@ export async function getTeamWithMembers(args: {
     };
   });
 
-  const eventTypes = teamOrOrg.eventTypes.map((eventType) => ({
+  const eventTypesWithUsersUserProfile = [];
+  for (const eventType of teamOrOrg.eventTypes) {
+    const usersWithUserProfile = [];
+    for (const { user } of eventType.hosts) {
+      usersWithUserProfile.push(
+        await UserRepository.enrichUserWithItsProfile({
+          user,
+        })
+      );
+    }
+    eventTypesWithUsersUserProfile.push({
+      ...eventType,
+      users: usersWithUserProfile,
+    });
+  }
+  const eventTypes = eventTypesWithUsersUserProfile.map((eventType) => ({
     ...eventType,
     metadata: EventTypeMetaDataSchema.parse(eventType.metadata),
   }));
+
   // Don't leak invite tokens to the frontend
   const { inviteTokens, ...teamWithoutInviteTokens } = teamOrOrg;
 
@@ -200,6 +262,7 @@ export async function getTeamWithMembers(args: {
 
   return {
     ...teamWithoutInviteTokens,
+    ...(teamWithoutInviteTokens.logoUrl ? { logo: teamWithoutInviteTokens.logoUrl } : {}),
     /** To prevent breaking we only return non-email attached token here, if we have one */
     inviteToken: inviteTokens.find(
       (token) =>
@@ -212,6 +275,107 @@ export async function getTeamWithMembers(args: {
   };
 }
 
+export async function getTeamWithoutMembers(args: {
+  id?: number;
+  slug?: string;
+  userId?: number;
+  orgSlug?: string | null;
+  /**
+   * If true, means that you are fetching an organization and not a team
+   */
+  isOrgView?: boolean;
+}) {
+  const { id, slug, userId, orgSlug, isOrgView } = args;
+
+  let lookupBy;
+
+  if (id) {
+    lookupBy = { id, havingMemberWithId: userId };
+  } else if (slug) {
+    lookupBy = { slug, havingMemberWithId: userId };
+  } else {
+    throw new Error("Must provide either id or slug");
+  }
+
+  const arg = {
+    lookupBy,
+    forOrgWithSlug: orgSlug ?? null,
+    isOrg: !!isOrgView,
+    teamSelect: {
+      id: true,
+      name: true,
+      slug: true,
+      isOrganization: true,
+      logoUrl: true,
+      bio: true,
+      hideBranding: true,
+      hideBookATeamMember: true,
+      isPrivate: true,
+      metadata: true,
+      bookingLimits: true,
+      includeManagedEventsInLimits: true,
+      parent: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          isPrivate: true,
+          isOrganization: true,
+          logoUrl: true,
+          metadata: true,
+        },
+      },
+      parentId: true,
+      children: {
+        select: {
+          name: true,
+          slug: true,
+        },
+      },
+      theme: true,
+      brandColor: true,
+      darkBrandColor: true,
+      inviteTokens: {
+        select: {
+          token: true,
+          expires: true,
+          expiresInDays: true,
+          identifier: true,
+        },
+      },
+    },
+  } as const;
+
+  const teamOrOrg = isOrgView ? await getOrg(arg) : await getTeam(arg);
+
+  if (!teamOrOrg) return null;
+
+  // Don't leak invite tokens to the frontend
+  const { inviteTokens, ...teamWithoutInviteTokens } = teamOrOrg;
+
+  // Don't leak stripe payment ids
+  const teamMetadata = teamOrOrg.metadata;
+  const {
+    paymentId: _,
+    subscriptionId: __,
+    subscriptionItemId: ___,
+    ...restTeamMetadata
+  } = teamMetadata || {};
+
+  return {
+    ...teamWithoutInviteTokens,
+    ...(teamWithoutInviteTokens.logoUrl ? { logo: teamWithoutInviteTokens.logoUrl } : {}),
+    /** To prevent breaking we only return non-email attached token here, if we have one */
+    inviteToken: inviteTokens.find(
+      (token) =>
+        token.identifier === `invite-link-for-teamId-${teamOrOrg.id}` &&
+        token.expires > new Date(new Date().setHours(24))
+    ),
+    metadata: restTeamMetadata,
+    bookingLimits: parseBookingLimit(teamOrOrg.bookingLimits),
+  };
+}
+
 // also returns team
 export async function isTeamAdmin(userId: number, teamId: number) {
   const team = await prisma.membership.findFirst({
@@ -221,7 +385,15 @@ export async function isTeamAdmin(userId: number, teamId: number) {
       accepted: true,
       OR: [{ role: "ADMIN" }, { role: "OWNER" }],
     },
-    include: { team: true },
+    include: {
+      team: {
+        select: {
+          metadata: true,
+          parentId: true,
+          isOrganization: true,
+        },
+      },
+    },
   });
   if (!team) return false;
   return team;
@@ -246,4 +418,73 @@ export async function isTeamMember(userId: number, teamId: number) {
       accepted: true,
     },
   }));
+}
+
+export async function updateNewTeamMemberEventTypes(userId: number, teamId: number) {
+  const eventTypesToAdd = await prisma.eventType.findMany({
+    where: {
+      team: { id: teamId },
+      assignAllTeamMembers: true,
+    },
+    select: {
+      ...allManagedEventTypeProps,
+      id: true,
+      schedulingType: true,
+    },
+  });
+
+  const allManagedEventTypePropsZod = _EventTypeModel.pick(allManagedEventTypeProps).extend({
+    bookingFields: _EventTypeModel.shape.bookingFields.nullish(),
+  });
+
+  eventTypesToAdd.length > 0 &&
+    (await prisma.$transaction(
+      eventTypesToAdd.map((eventType) => {
+        if (eventType.schedulingType === "MANAGED") {
+          const managedEventTypeValues = allManagedEventTypePropsZod
+            .omit(unlockedManagedEventTypeProps)
+            .parse(eventType);
+
+          // Define the values for unlocked properties to use on creation, not updation
+          const unlockedEventTypeValues = allManagedEventTypePropsZod
+            .pick(unlockedManagedEventTypeProps)
+            .parse(eventType);
+
+          // Calculate if there are new workflows for which assigned members will get too
+          const currentWorkflowIds = eventType.workflows?.map((wf) => wf.workflowId);
+
+          return prisma.eventType.create({
+            data: {
+              ...managedEventTypeValues,
+              ...unlockedEventTypeValues,
+              bookingLimits:
+                (managedEventTypeValues.bookingLimits as unknown as Prisma.InputJsonObject) ?? undefined,
+              recurringEvent:
+                (managedEventTypeValues.recurringEvent as unknown as Prisma.InputJsonValue) ?? undefined,
+              metadata: (managedEventTypeValues.metadata as Prisma.InputJsonValue) ?? undefined,
+              bookingFields: (managedEventTypeValues.bookingFields as Prisma.InputJsonValue) ?? undefined,
+              durationLimits: (managedEventTypeValues.durationLimits as Prisma.InputJsonValue) ?? undefined,
+              eventTypeColor: (managedEventTypeValues.eventTypeColor as Prisma.InputJsonValue) ?? undefined,
+              rrSegmentQueryValue:
+                (managedEventTypeValues.rrSegmentQueryValue as Prisma.InputJsonValue) ?? undefined,
+              onlyShowFirstAvailableSlot: managedEventTypeValues.onlyShowFirstAvailableSlot ?? false,
+              userId,
+              users: {
+                connect: [{ id: userId }],
+              },
+              parentId: eventType.id,
+              hidden: false,
+              workflows: currentWorkflowIds && {
+                create: currentWorkflowIds.map((wfId) => ({ workflowId: wfId })),
+              },
+            },
+          });
+        } else {
+          return prisma.eventType.update({
+            where: { id: eventType.id },
+            data: { hosts: { create: [{ userId, isFixed: eventType.schedulingType === "COLLECTIVE" }] } },
+          });
+        }
+      })
+    ));
 }

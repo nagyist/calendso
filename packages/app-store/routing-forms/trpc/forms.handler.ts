@@ -31,13 +31,14 @@ export const formsHandler = async ({ ctx, input }: FormsHandlerOptions) => {
         position: "desc",
       },
       {
-        createdAt: "asc",
+        createdAt: "desc",
       },
     ],
     include: {
       team: {
-        include: {
-          members: true,
+        select: {
+          id: true,
+          name: true,
         },
       },
       _count: {
@@ -54,15 +55,19 @@ export const formsHandler = async ({ ctx, input }: FormsHandlerOptions) => {
     }),
   });
 
-  const serializableForms = [];
-  for (let i = 0; i < forms.length; i++) {
-    const form = forms[i];
-    const hasWriteAccess = canEditEntity(form, user.id);
-    serializableForms.push({
-      form: await getSerializableForm({ form: forms[i] }),
-      readOnly: !hasWriteAccess,
-    });
-  }
+  const serializableForms = await Promise.all(
+    forms.map(async (form) => {
+      const [hasWriteAccess, serializedForm] = await Promise.all([
+        canEditEntity(form, user.id),
+        getSerializableForm({ form }),
+      ]);
+
+      return {
+        form: serializedForm,
+        readOnly: !hasWriteAccess,
+      };
+    })
+  );
 
   return {
     filtered: serializableForms,
@@ -71,11 +76,13 @@ export const formsHandler = async ({ ctx, input }: FormsHandlerOptions) => {
 };
 
 export default formsHandler;
+type SupportedFilters = Omit<NonNullable<NonNullable<TFormSchema>["filters"]>, "upIds"> | undefined;
+
 export function getPrismaWhereFromFilters(
   user: {
     id: number;
   },
-  filters: NonNullable<TFormSchema>["filters"]
+  filters: SupportedFilters
 ) {
   const where = {
     OR: [] as Prisma.App_RoutingForms_FormWhereInput[],

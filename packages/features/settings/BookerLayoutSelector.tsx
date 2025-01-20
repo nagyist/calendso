@@ -8,7 +8,7 @@ import { classNames } from "@calcom/lib";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { BookerLayouts, defaultBookerLayoutSettings } from "@calcom/prisma/zod-utils";
 import { bookerLayoutOptions, type BookerLayoutSettings } from "@calcom/prisma/zod-utils";
-import useMeQuery from "@calcom/trpc/react/hooks/useMeQuery";
+import type { RouterOutputs } from "@calcom/trpc/react";
 import { Label, CheckboxField, Button } from "@calcom/ui";
 
 import SectionBottomActions from "./SectionBottomActions";
@@ -31,9 +31,11 @@ type BookerLayoutSelectorProps = {
    * to this boolean.
    */
   isDark?: boolean;
-
+  isLoading?: boolean;
   isDisabled?: boolean;
   isOuterBorder?: boolean;
+  user?: Partial<Pick<RouterOutputs["viewer"]["me"], "defaultBookerLayouts">>;
+  isUserLoading?: boolean;
 };
 
 const defaultFieldName = "metadata.bookerLayouts";
@@ -46,6 +48,9 @@ export const BookerLayoutSelector = ({
   isDark,
   isDisabled = false,
   isOuterBorder = false,
+  isLoading = false,
+  user,
+  isUserLoading,
 }: BookerLayoutSelectorProps) => {
   const { control, getValues } = useFormContext();
   const { t } = useLocale();
@@ -76,10 +81,12 @@ export const BookerLayoutSelector = ({
               onChange={onChange}
               isDark={isDark}
               isOuterBorder={isOuterBorder}
+              user={user}
+              isUserLoading={isUserLoading}
             />
             {!isOuterBorder && (
               <SectionBottomActions align="end">
-                <Button type="submit" disabled={isDisabled} color="primary">
+                <Button loading={isLoading} type="submit" disabled={isDisabled} color="primary">
                   {t("update")}
                 </Button>
               </SectionBottomActions>
@@ -97,6 +104,8 @@ type BookerLayoutFieldsProps = {
   showUserSettings: boolean;
   isDark?: boolean;
   isOuterBorder?: boolean;
+  user?: Partial<Pick<RouterOutputs["viewer"]["me"], "defaultBookerLayouts">>;
+  isUserLoading?: boolean;
 };
 
 type BookerLayoutState = { [key in BookerLayouts]: boolean };
@@ -107,9 +116,10 @@ const BookerLayoutFields = ({
   showUserSettings,
   isDark,
   isOuterBorder,
+  user,
+  isUserLoading,
 }: BookerLayoutFieldsProps) => {
   const { t } = useLocale();
-  const { isLoading: isUserLoading, data: user } = useMeQuery();
   const [isOverridingSettings, setIsOverridingSettings] = useState(false);
 
   const disableFields = showUserSettings && !isOverridingSettings;
@@ -219,7 +229,7 @@ const BookerLayoutFields = ({
         <p className="text-sm">
           <Trans i18nKey="bookerlayout_override_global_settings">
             You can manage this for all your event types in Settings {"-> "}
-            <Link href="/settings/my-account/appearance" className="underline">
+            <Link target="_blank" href="/settings/my-account/appearance" className="underline">
               Appearance
             </Link>{" "}
             or{" "}

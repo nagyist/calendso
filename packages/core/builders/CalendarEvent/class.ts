@@ -4,6 +4,7 @@ import type {
   AdditionalInformation,
   CalendarEvent,
   ConferenceData,
+  ExistingRecurringEvent,
   Person,
   VideoCallData,
 } from "@calcom/types/Calendar";
@@ -22,12 +23,14 @@ class CalendarEventClass implements CalendarEvent {
   conferenceData?: ConferenceData;
   additionalInformation?: AdditionalInformation;
   uid?: string | null;
+  existingRecurringEvent?: ExistingRecurringEvent | null;
   videoCallData?: VideoCallData;
   paymentInfo?: any;
   destinationCalendar?: DestinationCalendar[] | null;
   cancellationReason?: string | null;
   rejectionReason?: string | null;
   hideCalendarNotes?: boolean;
+  hideCalendarEventDetails?: boolean;
   additionalNotes?: string | null | undefined;
   recurrence?: string;
   iCalUID?: string | null;

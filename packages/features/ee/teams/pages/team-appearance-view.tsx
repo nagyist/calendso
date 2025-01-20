@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 
 import BrandColorsForm from "@calcom/features/ee/components/BrandColorsForm";
@@ -14,10 +14,9 @@ import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
 import { MembershipRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc/react";
 import type { RouterOutputs } from "@calcom/trpc/react";
-import { Button, Form, Meta, showToast, SettingsToggle } from "@calcom/ui";
+import { Button, Form, showToast, SettingsToggle } from "@calcom/ui";
 
 import ThemeLabel from "../../../settings/ThemeLabel";
-import { getLayout } from "../../../settings/layouts/SettingsLayout";
 
 type BrandColorsFormValues = {
   brandColor: string;
@@ -28,7 +27,7 @@ type ProfileViewProps = { team: RouterOutputs["viewer"]["teams"]["get"] };
 
 const ProfileView = ({ team }: ProfileViewProps) => {
   const { t } = useLocale();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const [hideBrandingValue, setHideBrandingValue] = useState(team?.hideBranding ?? false);
   const [hideBookATeamMember, setHideBookATeamMember] = useState(team?.hideBookATeamMember ?? false);
@@ -80,19 +79,14 @@ const ProfileView = ({ team }: ProfileViewProps) => {
 
   return (
     <>
-      <Meta
-        title={t("booking_appearance")}
-        description={t("appearance_team_description")}
-        borderInShellHeader={false}
-      />
       {isAdmin ? (
         <>
           <Form
             form={themeForm}
-            handleSubmit={(values) => {
+            handleSubmit={({ theme }) => {
               mutation.mutate({
                 id: team.id,
-                theme: values.theme || null,
+                theme: theme === "light" || theme === "dark" ? theme : null,
               });
             }}>
             <div className="border-subtle mt-6 flex items-center rounded-t-xl border p-6 text-sm">
@@ -104,7 +98,7 @@ const ProfileView = ({ team }: ProfileViewProps) => {
             <div className="border-subtle flex flex-col justify-between border-x px-6 py-8 sm:flex-row">
               <ThemeLabel
                 variant="system"
-                value={null}
+                value="system"
                 label={t("theme_system")}
                 defaultChecked={team.theme === null}
                 register={themeForm.register}
@@ -151,7 +145,7 @@ const ProfileView = ({ team }: ProfileViewProps) => {
             <SettingsToggle
               toggleSwitchAtTheEnd={true}
               title={t("disable_cal_branding", { appName: APP_NAME })}
-              disabled={mutation?.isLoading}
+              disabled={mutation?.isPending}
               description={t("removes_cal_branding", { appName: APP_NAME })}
               checked={hideBrandingValue}
               onCheckedChange={(checked) => {
@@ -163,7 +157,7 @@ const ProfileView = ({ team }: ProfileViewProps) => {
             <SettingsToggle
               toggleSwitchAtTheEnd={true}
               title={t("hide_book_a_team_member")}
-              disabled={mutation?.isLoading}
+              disabled={mutation?.isPending}
               description={t("hide_book_a_team_member_description", { appName: APP_NAME })}
               checked={hideBookATeamMember ?? false}
               onCheckedChange={(checked) => {
@@ -188,25 +182,31 @@ const ProfileViewWrapper = () => {
 
   const { t } = useLocale();
 
-  const { data: team, isLoading } = trpc.viewer.teams.get.useQuery(
+  const {
+    data: team,
+    isPending,
+    error,
+  } = trpc.viewer.teams.get.useQuery(
     { teamId: Number(params.id) },
     {
-      onError: () => {
-        router.push("/settings");
-      },
+      enabled: !!Number(params.id),
     }
   );
 
-  if (isLoading)
-    return (
-      <AppearanceSkeletonLoader title={t("appearance")} description={t("appearance_team_description")} />
-    );
+  useEffect(
+    function refactorMeWithoutEffect() {
+      if (error) {
+        router.replace("/teams");
+      }
+    },
+    [error]
+  );
+
+  if (isPending) return <AppearanceSkeletonLoader />;
 
   if (!team) return null;
 
   return <ProfileView team={team} />;
 };
-
-ProfileViewWrapper.getLayout = getLayout;
 
 export default ProfileViewWrapper;
